@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gates.sh:*)",
+      "Bash(scripts/win-status:*)",
+      "Bash(gh auth status:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh api repos/Juhyeoklee/mabiseo/milestones:*)"
+    ],
+    "ask": [
+      "Bash(ssh mabiseo-win:*)",
+      "Bash(ssh *mabiseo-win*)",
+      "Bash(scripts/win:*)",
+      "Bash(scp:*)"
+    ]
+  }
+}

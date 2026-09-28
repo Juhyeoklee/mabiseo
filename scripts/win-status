@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# 조회 전용. 게임 CLI 연결 상태만 본다. 기대: {"pipe":"connected"}
+set -eu
+cli="${MABISEO_WIN_CLI:-C:/Nexon/MabinogiMobile/MabinogiMobile_CLI.exe}"
+ssh mabiseo-win "$cli status"

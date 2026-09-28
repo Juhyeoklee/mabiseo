@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Windows(mabiseo-win)에서 현재 세션 브랜치를 받아 실행한다. 사용: scripts/win <명령...>
+set -eu
+[ $# -gt 0 ] || { echo "사용: scripts/win <명령...>   예) scripts/win npm run ask \"채집 상태\"" >&2; exit 2; }
+repo="${MABISEO_WIN_REPO:-C:/mabiseo}"
+branch="$(git -C "$(dirname "$0")/.." rev-parse --abbrev-ref HEAD)"
+cmd="$*"
+ssh mabiseo-win "cd $repo && git fetch origin && git checkout $branch && git pull --ff-only origin $branch && (cd desktop 2>/dev/null && npm ci --silent || true) && $cmd"

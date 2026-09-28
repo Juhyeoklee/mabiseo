@@ -1,0 +1,10 @@
+_collected/
+node_modules/
+dist/
+out/
+.env
+.env.*
+.DS_Store
+*.log
+.claude/settings.local.json
+.claude/review/
