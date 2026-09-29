@@ -6,6 +6,7 @@ import { FakeConnector } from "./fake.js";
 import { loadRecordings } from "./recordings.js";
 
 const dir = fileURLToPath(new URL("../../recordings/", import.meta.url));
+const unknownItem = '{"displayName":"마비서없는아이템"}';
 
 describe("가짜 커넥터", () => {
   it("녹화된 명령·본문 조합마다 그 파일의 JSON을 그대로 돌려준다", async () => {
@@ -40,14 +41,70 @@ describe("가짜 커넥터", () => {
       body: { error: "not_recorded" },
     });
   });
+});
 
-  it("offline이면 status가 game_off로 끊겼다고 답한다", async () => {
+describe("게임의 거부는 예외가 아니라 값이다", () => {
+  it("앉아 있지 않을 때 stand_up은 not_sitting으로 거부된다", async () => {
+    const fake = await FakeConnector.fromDirectory(dir);
+    expect(await fake.run("stand_up")).toEqual({ error: "not_sitting", message: expect.any(String) });
+  });
+
+  it("진행 중인 행동이 없을 때 stop_action은 invalid_state로 거부된다", async () => {
+    const fake = await FakeConnector.fromDirectory(dir);
+    expect(await fake.run("stop_action")).toEqual({ error: "invalid_state", message: expect.any(String) });
+  });
+
+  it("없는 이름의 execute_gathering은 날개를 쓰기 전에 not_found로 막힌다", async () => {
+    const fake = await FakeConnector.fromDirectory(dir);
+    expect(await fake.run("execute_gathering", unknownItem)).toEqual({
+      error: "not_found",
+      message: expect.any(String),
+    });
+  });
+
+  it("write_chat은 확인 창 없이 즉시 전송됐다고 답한다", async () => {
+    const fake = await FakeConnector.fromDirectory(dir);
+    expect(await fake.run("write_chat", "마비서 테스트")).toEqual({ message: expect.any(String) });
+    expect(await fake.run("write_chat", "마비서 테스트")).not.toHaveProperty("error");
+  });
+});
+
+describe("--fail=login: 캐릭터 선택 화면", () => {
+  it("status는 연결됐다고 답해서 status만으로는 게임 안인지 모른다", async () => {
+    const fake = await FakeConnector.fromDirectory(dir, "login");
+    expect(await fake.run("status")).toEqual({ pipe: "connected" });
+  });
+
+  it("조회와 실행 명령 모두 not_in_game으로 거부된다", async () => {
+    const fake = await FakeConnector.fromDirectory(dir, "login");
+    const rejected = { error: "not_in_game", message: expect.any(String) };
+    expect(await fake.run("get_my_info")).toEqual(rejected);
+    expect(await fake.run("stand_up")).toEqual(rejected);
+    expect(await fake.run("execute_gathering", unknownItem)).toEqual(rejected);
+  });
+
+  it("그 상황에 녹화가 없는 명령은 지어내지 않고 not_recorded다", async () => {
+    const fake = await FakeConnector.fromDirectory(dir, "login");
+    expect(await fake.run("get_items")).toMatchObject({ status: "rejected", body: { error: "not_recorded" } });
+  });
+});
+
+describe("--fail=offline: 게임 꺼짐", () => {
+  it("status가 game_off로 끊겼다고 답한다", async () => {
     const fake = await FakeConnector.fromDirectory(dir, "offline");
     expect(await fake.run("status")).toEqual({ pipe: "disconnected", reason: "game_off" });
   });
 
-  it("offline이면 조회 명령도 끊김 값을 돌려준다", async () => {
+  it("조회와 실행 명령 모두 같은 끊김 값을 돌려준다", async () => {
     const fake = await FakeConnector.fromDirectory(dir, "offline");
-    expect(await fake.run("get_my_info")).toEqual({ pipe: "disconnected", reason: "game_off" });
+    const disconnected = { pipe: "disconnected", reason: "game_off" };
+    expect(await fake.run("get_my_info")).toEqual(disconnected);
+    expect(await fake.run("stand_up")).toEqual(disconnected);
+    expect(await fake.run("execute_gathering", unknownItem)).toEqual(disconnected);
+  });
+
+  it("그 상황에 녹화가 없는 명령은 지어내지 않고 not_recorded다", async () => {
+    const fake = await FakeConnector.fromDirectory(dir, "offline");
+    expect(await fake.run("get_items")).toMatchObject({ status: "rejected", body: { error: "not_recorded" } });
   });
 });
