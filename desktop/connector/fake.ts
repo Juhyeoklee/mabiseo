@@ -17,7 +17,6 @@ export class FakeConnector implements Connector {
   ) {}
 
   async run(command: string, body?: string): Promise<Json> {
-    // TODO(#5): 게임이 꺼진 채 조회를 부르면 실물이 무엇을 내는지는 미녹화. 지금은 status의 끊김 응답을 모든 명령에 돌려준다
     if (this.fail === "offline") return this.offline;
     return this.responses.get(key(command, body)) ?? notRecorded(command, body);
   }

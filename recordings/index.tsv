@@ -22,3 +22,7 @@ get_alterable_items.mushroom.json	0	82	3074	get_alterable_items	버섯
 get_altering_works.json	0	82	4747	get_altering_works	
 get_craftable_items.json	0	116	504264	get_craftable_items	
 get_craftable_items.spiderweb.json	0	64	577	get_craftable_items	거미줄
+stand_up.standing.json	0	109	50	stand_up	
+stop_action.idle.json	0	72	85	stop_action	
+execute_gathering.unknown-name.json	0	86	106	execute_gathering	{"displayName":"마비서없는아이템"}
+write_chat.json	0	124	39	write_chat	마비서 테스트
