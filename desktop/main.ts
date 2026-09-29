@@ -1,0 +1,91 @@
+import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
+import { ask, type AgentEvent } from "./agent/host.js";
+import type { FailMode } from "./connector/connector.js";
+import { FakeConnector } from "./connector/fake.js";
+import { Tools } from "./tools/tools.js";
+
+const recordings = fileURLToPath(new URL("../recordings/", import.meta.url));
+const usage = '사용법: npm run ask -- [--fail=login|offline] [--wings=N] "할 일"';
+const failFlags: Readonly<Record<string, FailMode>> = { "--fail=login": "login", "--fail=offline": "offline" };
+
+interface Args {
+  prompt: string;
+  fail: FailMode | undefined;
+  wings: number;
+}
+
+function parseArgs(argv: string[]): Args | undefined {
+  let fail: FailMode | undefined;
+  let wings = 10;
+  const words: string[] = [];
+  for (const arg of argv) {
+    const mode = failFlags[arg];
+    if (mode) fail = mode;
+    else if (arg.startsWith("--wings=")) wings = Number(arg.slice("--wings=".length));
+    else if (arg.startsWith("--")) return undefined;
+    else words.push(arg);
+  }
+  if (!words.length || !Number.isInteger(wings) || wings < 0) return undefined;
+  return { prompt: words.join(" "), fail, wings };
+}
+
+async function main(argv: string[]): Promise<void> {
+  const args = parseArgs(argv);
+  if (!args) {
+    console.error(usage);
+    process.exitCode = 2;
+    return;
+  }
+  const { prompt, fail, wings } = args;
+
+  const tools = new Tools(await FakeConnector.fromDirectory(recordings, fail), wings);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    await ask(prompt, {
+      tools,
+      approve: async (name, input) => {
+        try {
+          const answer = await rl.question(`승인? ${name} ${JSON.stringify(input)} [y/N] `);
+          return answer.trim().toLowerCase() === "y";
+        } catch {
+          return false;
+        }
+      },
+      onEvent: print,
+    });
+  } finally {
+    rl.close();
+  }
+}
+
+function print(event: AgentEvent): void {
+  switch (event.kind) {
+    case "started":
+      console.log(`[모델] ${event.model}`);
+      break;
+    case "text":
+      console.log(event.text);
+      break;
+    case "tool":
+      console.log(`[도구] ${event.name} ${JSON.stringify(event.input)}`);
+      break;
+    case "tool_result":
+      console.log(`[결과] ${event.text}`);
+      break;
+    case "done":
+      console.log(`[끝] ${event.turns}턴 · $${event.costUsd.toFixed(4)}`);
+      break;
+    case "failed":
+      console.log(`[실패] ${event.reason}`);
+      process.exitCode = 1;
+      break;
+  }
+}
+
+try {
+  await main(process.argv.slice(2));
+} catch (error) {
+  console.error(`[오류] ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+}
