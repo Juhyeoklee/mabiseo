@@ -1,0 +1,9 @@
+{
+  "type": "event",
+  "id": "a1",
+  "event": {
+    "kind": "tool",
+    "name": "get_currencies",
+    "input": {}
+  }
+}

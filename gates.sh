@@ -26,7 +26,8 @@ for d in desktop ios protocol; do [ -d "$d" ] && code_dirs+=("$d"); done
 
 if [ ${#code_dirs[@]} -gt 0 ]; then
   zero "코드에 § 없음"            grep -rn '§' "${code_dirs[@]}" --include='*.ts' --include='*.tsx' --include='*.swift' --exclude-dir=node_modules
-  zero "이름 없는 유틸 파일 없음"   find "${code_dirs[@]}" -type f \( -name 'utils.*' -o -name 'helpers.*' -o -name 'common.*' -o -name 'misc.*' \) -not -path '*/node_modules/*'
+  zero "이름 없는 유틸 파일 없음"   find "${code_dirs[@]}" -type f \( -name 'utils.*' -o -name 'helpers.*' -o -name 'common.*' -o -name 'misc.*' \) -not -path '*/node_modules/*' -not -path '*/.build/*'
+  zero "명시적 any 없음"            grep -rn -E ':\s*any\b|<any>|as any\b' "${code_dirs[@]}" --include='*.ts' --include='*.tsx' --exclude-dir=node_modules
 fi
 
 if [ -d desktop ]; then
@@ -34,7 +35,6 @@ if [ -d desktop ]; then
   zero "child_process는 connector/에만" grep -rln 'child_process' desktop --include='*.ts' --exclude-dir=node_modules --exclude-dir=connector
   zero "agent/는 connector를 import하지 않음(테스트 제외)" grep -rn -E "from ['\"].*connector" desktop/agent --include='*.ts' --exclude='*.test.ts'
   zero "맡기기 명령 이름은 tools/와 connector/에만(테스트 제외)" grep -rn -E "execute_(gathering|altering|crafting)|complete_altering_work|play_music_score|change_instrument|stop_action|stand_up" desktop --include='*.ts' --exclude='*.test.ts' --exclude-dir=node_modules --exclude-dir=connector --exclude-dir=tools
-  zero "명시적 any 없음"                grep -rn -E ':\s*any\b|<any>|as any\b' desktop --include='*.ts' --include='*.tsx' --exclude-dir=node_modules
   [ -d desktop/node_modules ] || run "desktop: npm ci" npm --prefix desktop ci --silent
   run "desktop: tsc"    npm --prefix desktop run -s typecheck
   run "desktop: 테스트" npm --prefix desktop test -s -- --reporter=dot
@@ -43,7 +43,10 @@ else
 fi
 
 if [ -d protocol ]; then
-  skip "protocol: 계약 검사(생성물 diff 0)"
+  [ -d protocol/node_modules ] || run "protocol: npm ci" npm --prefix protocol ci --silent
+  run "protocol: tsc"        npm --prefix protocol run -s typecheck
+  run "protocol: TS 왕복"    npm --prefix protocol test -s -- --reporter=dot
+  run "protocol: Swift 왕복" swift test --package-path protocol -q
 else
   skip "protocol"
 fi

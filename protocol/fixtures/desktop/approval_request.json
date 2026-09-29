@@ -1,0 +1,11 @@
+{
+  "type": "approval_request",
+  "id": "r1",
+  "askId": "a1",
+  "tool": "execute_gathering",
+  "input": {
+    "displayName": "새록 버섯",
+    "count": 100
+  },
+  "wings": 5
+}

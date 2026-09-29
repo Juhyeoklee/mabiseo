@@ -1,0 +1,8 @@
+{
+  "type": "event",
+  "id": "a1",
+  "event": {
+    "kind": "tool_result",
+    "text": "{\"wings\":10}"
+  }
+}

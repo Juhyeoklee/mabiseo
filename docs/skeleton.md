@@ -43,7 +43,7 @@
 
 ```
 mabiseo/
-├── protocol/   메시지 스키마 — 두 언어가 공유하는 유일한 계약 (→ TS 타입 · Swift Codable)
+├── protocol/   메시지 스키마 — 두 언어가 공유하는 유일한 계약 (TS zod · Swift Codable · 공유 픽스처 왕복이 검사)
 ├── desktop/    Electron + TS
 │   ├── agent/       Agent SDK 호스트 (세션 · 스트림 · 도구 승인 콜백)
 │   ├── connector/   CLI 어댑터 — 실행 · 응답 정규화 · 한글 인코딩 / 실물(Windows) ↔ 가짜(녹화 재생)
