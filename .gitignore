@@ -8,3 +8,4 @@ out/
 *.log
 .claude/settings.local.json
 .claude/review/
+.build/

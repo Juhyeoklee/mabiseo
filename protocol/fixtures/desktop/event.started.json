@@ -1,0 +1,8 @@
+{
+  "type": "event",
+  "id": "a1",
+  "event": {
+    "kind": "started",
+    "model": "claude-opus-5-5"
+  }
+}
