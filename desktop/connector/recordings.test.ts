@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { situationDirs } from "./fake.js";
 import { loadRecordings } from "./recordings.js";
 
 const dir = fileURLToPath(new URL("../../recordings/", import.meta.url));
@@ -32,5 +33,20 @@ describe("녹화 색인", () => {
     const all = recordings.find((r) => r.file === "get_items.json");
     expect(all).toMatchObject({ command: "get_items" });
     expect(all).not.toHaveProperty("body");
+  });
+});
+
+describe("상황 디렉터리", () => {
+  const situations = Object.entries(situationDirs);
+
+  it.each(situations)("%s(%s)은 자기 색인을 갖고 파일 전부가 색인에 있다", async (_, sub) => {
+    const files = (await readdir(join(dir, sub))).filter((f) => f.endsWith(".json"));
+    const indexed = (await loadRecordings(join(dir, sub))).map((r) => r.file);
+    expect(indexed.sort()).toEqual(files.sort());
+  });
+
+  it.each(situations)("%s(%s)은 status · 조회 · 실행 명령 각각의 응답을 담는다", async (_, sub) => {
+    const commands = (await loadRecordings(join(dir, sub))).map((r) => r.command);
+    expect(commands).toEqual(expect.arrayContaining(["status", "get_my_info", "stand_up", "execute_gathering"]));
   });
 });
