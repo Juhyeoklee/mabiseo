@@ -34,6 +34,7 @@ if [ -d desktop ]; then
   zero "입력 합성 라이브러리 없음"      grep -rn -E 'robotjs|nut-js|nut-tree|node-key-sender|@computer-use' desktop --include='package.json' --include='*.ts'
   zero "child_process는 connector/에만" grep -rln 'child_process' desktop --include='*.ts' --exclude-dir=node_modules --exclude-dir=connector
   zero "agent/는 connector를 import하지 않음(테스트 제외)" grep -rn -E "from ['\"].*connector" desktop/agent --include='*.ts' --exclude='*.test.ts'
+  zero "전송층(ws · bonjour-service · protocol/)은 server/에만" grep -rln -E "from ['\"](ws|bonjour-service|.*protocol/)" desktop --include='*.ts' --exclude-dir=node_modules --exclude-dir=server
   zero "맡기기 명령 이름은 tools/와 connector/에만(테스트 제외)" grep -rn -E "execute_(gathering|altering|crafting)|complete_altering_work|play_music_score|change_instrument|stop_action|stand_up" desktop --include='*.ts' --exclude='*.test.ts' --exclude-dir=node_modules --exclude-dir=connector --exclude-dir=tools
   [ -d desktop/node_modules ] || run "desktop: npm ci" npm --prefix desktop ci --silent
   run "desktop: tsc"    npm --prefix desktop run -s typecheck
