@@ -45,4 +45,8 @@ else
   skip "ios"
 fi
 
+if [ -d recordings ]; then
+  zero "녹화는 전부 UTF-8 JSON" bash -c 'for f in recordings/*.json; do python3 -c "import sys,json; s=open(sys.argv[1],encoding=\"utf-8\").read(); json.loads(s); assert \"\ufffd\" not in s" "$f" >/dev/null 2>&1 || echo "$f"; done'
+fi
+
 exit $fail
