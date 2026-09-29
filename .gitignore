@@ -9,3 +9,6 @@ out/
 .claude/settings.local.json
 .claude/review/
 .build/
+ios/App/*.xcodeproj
+ios/App/*.xcworkspace
+ios/App/Derived/

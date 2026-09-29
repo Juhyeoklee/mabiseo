@@ -53,7 +53,8 @@ else
 fi
 
 if [ -d ios ]; then
-  skip "ios: 빌드 · Swift 테스트"
+  run "ios: Swift 테스트" swift test --package-path ios -q
+  run "ios: 앱 빌드(시뮬레이터)" bash -c 'tuist generate --path ios/App --no-open --cache-profile none >/dev/null && xcodebuild -workspace ios/App/Mabiseo.xcworkspace -scheme Mabiseo -destination "generic/platform=iOS Simulator" -quiet build CODE_SIGNING_ALLOWED=NO'
 else
   skip "ios"
 fi
