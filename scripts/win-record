@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# 조회 명령 전부를 Windows 로그인 세션에서 한 번씩 돌려 recordings/에 담는다. 날개도 채팅도 쓰지 않는다.
+# 사용: scripts/win-record   (게임이 켜져 있고 캐릭터가 필드에 있어야 한다)
+set -eu
+here="$(cd "$(dirname "$0")" && pwd)"
+dest="$here/../recordings"
+home="$(ssh mabiseo-win 'echo %USERPROFILE%' | tr -d '\r')"
+runner="$home\\mabiseo-runner"
+runner_scp="$(printf '%s' "$runner" | tr '\\\\' '/')"
+scp -q "$here/win-record.ps1" "mabiseo-win:$runner_scp/"
+"$here/win-exec" "powershell -NoProfile -ExecutionPolicy Bypass -File \"$runner\\win-record.ps1\" -Out \"$runner\\rec\" -Cli \"${MABISEO_WIN_CLI:-C:\\Nexon\\MabinogiMobile\\MabinogiMobile_CLI.exe}\""
+tmp="$(mktemp -d)"
+scp -q -r "mabiseo-win:$runner_scp/rec" "$tmp/"
+cp "$tmp"/rec/* "$dest/"
+rm -rf "$tmp"
+echo "받은 파일: $(ls "$dest"/*.json | wc -l | tr -d ' ')개 → $dest"
