@@ -32,7 +32,7 @@ $queries = @(
 )
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 Remove-Item "$Out\*" -Force -ErrorAction SilentlyContinue
-$index = @("file`texit`tms`tbytes`targs")
+$index = @("file`texit`tms`tbytes`tcommand`tbody")
 foreach ($q in $queries) {
   $file = if ($q.label) { "$($q.name).$($q.label).json" } else { "$($q.name).json" }
   $arguments = $q.name
@@ -53,7 +53,7 @@ foreach ($q in $queries) {
   $sw.Stop()
   [System.IO.File]::WriteAllBytes("$Out\$file", $ms.ToArray())
   if ($err) { [System.IO.File]::WriteAllText("$Out\$($file -replace '\.json$', '.stderr.txt')", $err, [System.Text.Encoding]::UTF8) }
-  $index += "$file`t$($p.ExitCode)`t$($sw.ElapsedMilliseconds)`t$($ms.Length)`t$arguments"
+  $index += "$file`t$($p.ExitCode)`t$($sw.ElapsedMilliseconds)`t$($ms.Length)`t$($q.name)`t$($q.body)"
 }
 [System.IO.File]::WriteAllLines("$Out\index.tsv", $index, [System.Text.UTF8Encoding]::new($false))
 Get-Content "$Out\index.tsv"

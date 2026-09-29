@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 빈 틀. 코드 층을 만든 세션이 그 층의 게이트를 같은 커밋에 넣는다.
+# 코드 층을 만든 세션이 그 층의 게이트를 같은 커밋에 넣는다.
 set -u
 cd "$(dirname "$0")"
 fail=0
@@ -15,11 +15,17 @@ zero() {
   if [ -n "$hits" ]; then red "$name"; printf '%s\n' "$hits"; else green "$name"; fi
 }
 
+run() {
+  local name="$1"; shift
+  local out
+  if out=$("$@" 2>&1); then green "$name"; else red "$name"; printf '%s\n' "$out" | tail -40; fi
+}
+
 code_dirs=()
 for d in desktop ios protocol; do [ -d "$d" ] && code_dirs+=("$d"); done
 
 if [ ${#code_dirs[@]} -gt 0 ]; then
-  zero "코드에 § 없음"            grep -rn '§' "${code_dirs[@]}" --include='*.ts' --include='*.tsx' --include='*.swift'
+  zero "코드에 § 없음"            grep -rn '§' "${code_dirs[@]}" --include='*.ts' --include='*.tsx' --include='*.swift' --exclude-dir=node_modules
   zero "이름 없는 유틸 파일 없음"   find "${code_dirs[@]}" -type f \( -name 'utils.*' -o -name 'helpers.*' -o -name 'common.*' -o -name 'misc.*' \) -not -path '*/node_modules/*'
 fi
 
@@ -28,7 +34,9 @@ if [ -d desktop ]; then
   zero "child_process는 connector/에만" grep -rln 'child_process' desktop --include='*.ts' --exclude-dir=node_modules --exclude-dir=connector
   zero "agent/는 connector를 import하지 않음" grep -rn -E "from ['\"].*connector" desktop/agent --include='*.ts'
   zero "명시적 any 없음"                grep -rn -E ':\s*any\b|<any>|as any\b' desktop --include='*.ts' --include='*.tsx' --exclude-dir=node_modules
-  skip "desktop: tsc · 테스트"
+  [ -d desktop/node_modules ] || run "desktop: npm ci" npm --prefix desktop ci --silent
+  run "desktop: tsc"    npm --prefix desktop run -s typecheck
+  run "desktop: 테스트" npm --prefix desktop test -s -- --reporter=dot
 else
   skip "desktop"
 fi
