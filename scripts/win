@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Windows(mabiseo-win)에서 현재 세션 브랜치를 받아 실행한다. 사용: scripts/win <명령...>
+# 현재 세션 브랜치를 Windows에 받고, 명령을 로그인 세션에서 실행한다. 사용: scripts/win <명령...>
+# 브랜치 동기화도 로그인 세션에서 한다. SSH 세션(세션 0)은 자격 증명 관리자에 닿지 못해 git fetch가 실패한다.
 set -eu
-[ $# -gt 0 ] || { echo "사용: scripts/win <명령...>   예) scripts/win npm run ask \"채집 상태\"" >&2; exit 2; }
-repo="${MABISEO_WIN_REPO:-C:/mabiseo}"
-branch="$(git -C "$(dirname "$0")/.." rev-parse --abbrev-ref HEAD)"
-cmd="$*"
-ssh mabiseo-win "cd $repo && git fetch origin && git checkout $branch && git pull --ff-only origin $branch && (cd desktop 2>/dev/null && npm ci --silent || true) && $cmd"
+here="$(cd "$(dirname "$0")" && pwd)"
+[ $# -gt 0 ] || { echo "사용: scripts/win <명령...>   예) scripts/win git log -1 --oneline" >&2; exit 2; }
+repo="${MABISEO_WIN_REPO:-C:\\mabiseo}"
+branch="$(git -C "$here/.." rev-parse --abbrev-ref HEAD)"
+exec "$here/win-exec" -C "$repo" "git fetch -q origin && git checkout -q $branch && git pull -q --ff-only origin $branch && $*"

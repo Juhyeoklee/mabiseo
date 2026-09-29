@@ -16,7 +16,7 @@ desktop/    Electron + TS
   server/      LAN WebSocket + Bonjour 광고 + 페어링
 ios/        SwiftUI. 발견·페어링(01) · 대화(02)
 recordings/ Windows에서 녹화한 CLI 응답. 가짜 커넥터의 재료이자 테스트 픽스처
-scripts/    win(원격 실행) · win-status(조회 전용)
+scripts/    win-setup(실행기 설치) · win-exec(로그인 세션 실행) · win(브랜치 동기화 + 실행) · win-status(조회 전용)
 ```
 
 의존 방향은 `agent/ → tools/ → connector/` 한 방향이다. 에이전트가 커넥터를 직접 부르면 보호 장치가 우회된다.
@@ -48,7 +48,9 @@ scripts/    win(원격 실행) · win-status(조회 전용)
 - 가짜 커넥터로 먼저 만든다. 기본값은 가짜, 실물은 Windows에서만 켜진다. 실패 재현은 `--fail=wings|bag|popup|offline|login`
 - 관측은 에이전트가, 입력(탭 · 스크롤 · PC 화면 확인)은 사용자에게 요청한다
 - 기존 코드의 결함에 맞추느라 새 코드가 기이해지면 우회를 완성하지 말고 멈춘다
-- Windows는 `ssh mabiseo-win`으로 닿는다. `scripts/win <명령>`이 브랜치 체크아웃 · `npm ci` · 실행을 한 줄로 한다. 녹화는 Windows에서 파일로 쓰고 `scp`로 가져온다
+- Windows는 `ssh mabiseo-win`으로 닿는다. SSH 세션(세션 0)은 게임 파이프에 닿지 못하므로, 게임을 건드리는 명령은 `scripts/win-exec`가 로그인 세션의 실행기(작업 스케줄러 작업 `mabiseo-run`)를 깨워 돌린다. `scripts/win <명령>`은 세션 브랜치 체크아웃까지 얹은 것이고, `scripts/win-setup`이 실행기를 한 번 설치한다
+- Windows에 두는 ps1은 UTF-8 BOM으로 저장한다. BOM이 없으면 Windows PowerShell이 한글 주석을 CP949로 읽어 줄바꿈을 먹는다
+- 녹화는 Windows에서 파일로 쓰고 `scp`로 가져온다. `scp` 경로는 슬래시(`C:/Users/...`)로 쓴다
 - 원격 작업(gh · push)은 개인 계정 Juhyeoklee로 한다. `gh auth status`로 확인하고 아니면 `gh auth switch --user Juhyeoklee`. 원격 URL은 SSH 별칭 `github-personal`
 
 ## 신호원

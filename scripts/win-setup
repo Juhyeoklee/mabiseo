@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Windows에 실행기를 놓고 작업 스케줄러 작업 mabiseo-run을 등록한다. 한 번만 돈다. 다시 돌려도 안전하다.
+set -eu
+here="$(cd "$(dirname "$0")" && pwd)"
+user="$(ssh mabiseo-win 'echo %USERNAME%' | tr -d '\r')"
+home="$(ssh mabiseo-win 'echo %USERPROFILE%' | tr -d '\r')"
+runner="$home\\mabiseo-runner"
+runner_scp="$(printf '%s' "$runner" | tr '\\\\' '/')"
+ssh mabiseo-win "if not exist \"$runner\" mkdir \"$runner\""
+# schtasks는 XML을 UTF-16으로만 읽는다
+{ printf '\xff\xfe'; sed -e "s|__USER__|$user|" -e "s|__HOME__|$(printf '%s' "$home" | sed 's/\\/\\\\/g')|" "$here/win-task.xml" | iconv -f UTF-8 -t UTF-16LE; } > "${TMPDIR:-/tmp}/mabiseo-task.xml"
+scp -q "$here/win-runner.ps1" "$here/win-wait.ps1" "mabiseo-win:$runner_scp/"
+scp -q "${TMPDIR:-/tmp}/mabiseo-task.xml" "mabiseo-win:$runner_scp/task.xml"
+ssh mabiseo-win "schtasks /create /tn mabiseo-run /xml \"$runner\\task.xml\" /f"
+ssh mabiseo-win "schtasks /query /tn mabiseo-run" | LC_ALL=C tr -d "\r"

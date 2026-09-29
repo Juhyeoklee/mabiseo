@@ -12,6 +12,8 @@
       "Bash(ssh mabiseo-win:*)",
       "Bash(ssh *mabiseo-win*)",
       "Bash(scripts/win:*)",
+      "Bash(scripts/win-exec:*)",
+      "Bash(scripts/win-setup:*)",
       "Bash(scp:*)"
     ]
   }

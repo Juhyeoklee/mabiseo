@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# 명령 하나를 Windows 로그인 세션에서 실행하고 출력을 돌려준다. SSH 세션(세션 0)은 게임 파이프에 닿지 못한다.
+# 사용: scripts/win-exec [-C <Windows 작업 디렉터리>] <명령...>
+set -eu
+cwd=""
+if [ "${1:-}" = "-C" ]; then cwd="$2"; shift 2; fi
+[ $# -gt 0 ] || { echo "사용: scripts/win-exec [-C <디렉터리>] <명령...>" >&2; exit 2; }
+home="$(ssh mabiseo-win 'echo %USERPROFILE%' | tr -d '\r')"
+runner="$home\\mabiseo-runner"
+runner_scp="$(printf '%s' "$runner" | tr '\\\\' '/')"
+tmp="$(mktemp -d)"
+printf '%s\n' "$*" > "$tmp/cmd.txt"
+printf '%s\n' "$cwd" > "$tmp/cwd.txt"
+scp -q "$tmp/cmd.txt" "$tmp/cwd.txt" "mabiseo-win:$runner_scp/"
+ssh mabiseo-win "del /q \"$runner\\done.txt\" 2>nul & schtasks /run /tn mabiseo-run >nul"
+code="$(ssh mabiseo-win "powershell -NoProfile -ExecutionPolicy Bypass -File \"$runner\\win-wait.ps1\" ${MABISEO_WIN_TIMEOUT:-600}" | tr -d '\r')"
+scp -q "mabiseo-win:$runner_scp/out.txt" "$tmp/out.txt" 2>/dev/null || true
+cat "$tmp/out.txt" 2>/dev/null
+rm -rf "$tmp"
+case "$code" in timeout) echo "win-exec: 시간 초과" >&2; exit 124;; *) exit "${code:-1}";; esac
