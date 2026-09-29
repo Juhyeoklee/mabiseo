@@ -14,6 +14,7 @@ export interface Session {
   tools: Tools;
   approve: Approve;
   onEvent: (event: AgentEvent) => void;
+  abort?: AbortController;
 }
 
 const systemPrompt = `너는 마비노기 모바일 플레이어의 비서다. 도구로 게임 상태를 조회하고 캐릭터에게 일을 맡긴다.
@@ -36,6 +37,7 @@ export async function ask(prompt: string, session: Session): Promise<void> {
       settingSources: [],
       persistSession: false,
       maxTurns: 12,
+      ...(session.abort && { abortController: session.abort }),
     },
   });
   for await (const message of stream) {
