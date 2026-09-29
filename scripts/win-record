@@ -1,16 +1,26 @@
 #!/usr/bin/env bash
-# 조회 명령 전부를 Windows 로그인 세션에서 한 번씩 돌려 recordings/에 담는다. 날개도 채팅도 쓰지 않는다.
-# 사용: scripts/win-record   (게임이 켜져 있고 캐릭터가 필드에 있어야 한다)
+# 명령 세트 하나를 Windows 로그인 세션에서 돌려 recordings/에 담는다. 날개도 채팅 전송도 없다.
+# 사용: scripts/win-record [queries|field|outside] [하위 디렉터리]   (기본 queries. 세트별 전제는 win-record.ps1 머리에)
+# 필드가 아닌 상황(캐릭터 선택 화면 등)의 녹화는 하위 디렉터리에 담는다. 가짜 커넥터가 읽는 recordings/의 명령→응답 지도와 섞이지 않는다
 set -eu
+set_name="${1:-queries}"
+if [ "$set_name" = outside ] && [ -z "${2:-}" ]; then echo "outside 세트는 하위 디렉터리가 필요하다: scripts/win-record outside <char-select|game-off|...>" >&2; exit 2; fi
 here="$(cd "$(dirname "$0")" && pwd)"
-dest="$here/../recordings"
+dest="$here/../recordings${2:+/$2}"
+mkdir -p "$dest"
+[ -f "$dest/index.tsv" ] || printf 'file\texit\tms\tbytes\tcommand\tbody\n' > "$dest/index.tsv"
 home="$(ssh mabiseo-win 'echo %USERPROFILE%' | tr -d '\r')"
 runner="$home\\mabiseo-runner"
 runner_scp="$(printf '%s' "$runner" | tr '\\\\' '/')"
 scp -q "$here/win-record.ps1" "mabiseo-win:$runner_scp/"
-"$here/win-exec" "powershell -NoProfile -ExecutionPolicy Bypass -File \"$runner\\win-record.ps1\" -Out \"$runner\\rec\" -Cli \"${MABISEO_WIN_CLI:-C:\\Nexon\\MabinogiMobile\\MabinogiMobile_CLI.exe}\""
+"$here/win-exec" "powershell -NoProfile -ExecutionPolicy Bypass -File \"$runner\\win-record.ps1\" -Set $set_name -Out \"$runner\\rec\" -Cli \"${MABISEO_WIN_CLI:-C:\\Nexon\\MabinogiMobile\\MabinogiMobile_CLI.exe}\""
 tmp="$(mktemp -d)"
 scp -q -r "mabiseo-win:$runner_scp/rec" "$tmp/"
-cp "$tmp"/rec/* "$dest/"
+tr -d '\r' < "$tmp/rec/index.tsv" > "$tmp/index.tsv"
+find "$tmp/rec" -type f ! -name index.tsv -exec cp {} "$dest/" \;
+# 같은 파일명의 행은 새 것으로 갈아 끼우고 나머지는 둔다
+awk -F'\t' 'NR == FNR { if (FNR > 1) seen[$1] = 1; next } FNR == 1 || !($1 in seen)' "$tmp/index.tsv" "$dest/index.tsv" > "$tmp/merged.tsv"
+awk -F'\t' 'FNR > 1' "$tmp/index.tsv" >> "$tmp/merged.tsv"
+mv "$tmp/merged.tsv" "$dest/index.tsv"
 rm -rf "$tmp"
 echo "받은 파일: $(ls "$dest"/*.json | wc -l | tr -d ' ')개 → $dest"

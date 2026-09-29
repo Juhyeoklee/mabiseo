@@ -12,7 +12,7 @@
 ## 2. 의존 방향
 
 - `agent/ → tools/ → connector/` 한 방향이다. `agent/`가 `connector/`를 import하면 보호 장치가 우회된다
-- CLI 실행(`child_process`)은 `connector/` 한 곳에만 있다. `scripts/`의 녹화 도구는 이 규칙 밖이다. 조회 명령만 부르고, 그 산출물이 `connector/`의 재료다
+- CLI 실행(`child_process`)은 `connector/` 한 곳에만 있다. `scripts/`의 녹화 도구는 이 규칙 밖이다. 날개를 쓰지 않는 호출만 부르고, 실행 명령은 거부가 확실한 상태(없는 이름 · 게임 밖)에서만 부른다. 채팅은 보내지 않는다. 그 산출물이 `connector/`의 재료다
 - 두 언어가 공유하는 것은 `protocol/`뿐이다. 생성물(TS 타입 · Swift Codable)은 스키마에서 나오며 손으로 고치지 않는다
 
 ## 3. 실패 층

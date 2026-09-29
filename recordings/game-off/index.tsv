@@ -1,0 +1,5 @@
+file	exit	ms	bytes	command	body
+status.json	5	5029	45	status	
+get_my_info.json	5	5026	45	get_my_info	
+execute_gathering.json	5	5028	45	execute_gathering	{"displayName":"마비서없는아이템"}
+stand_up.json	5	5036	45	stand_up	
