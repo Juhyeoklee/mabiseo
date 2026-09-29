@@ -1,24 +1,24 @@
-file	exit	ms	bytes	args
-capabilities.json	0	684	25159	capabilities
-get_current_environment.json	0	70	326	get_current_environment
-get_activity.json	0	83	1147	get_activity
-get_my_info.json	0	81	1533	get_my_info
-get_quests.json	0	82	4	get_quests
-get_currencies.json	0	82	1883	get_currencies
-get_near_npcs.json	0	82	437	get_near_npcs
-get_near_pcs.json	0	82	1290	get_near_pcs
-get_inventory.json	0	82	140	get_inventory
-get_music_scores.json	0	83	17906	get_music_scores
-get_instruments.json	0	81	2386	get_instruments
-get_items.json	0	89	132485	get_items
-get_items.ingredient.json	0	76	69258	get_items "{\"category\":\"Ingredient\"}"
-get_social_actions.json	0	86	13621	get_social_actions
-get_daily_missions.json	0	81	2301	get_daily_missions
-get_weekly_missions.json	0	82	3303	get_weekly_missions
-get_gatherable_items.json	0	86	12733	get_gatherable_items
-get_gatherable_items.log.json	0	80	554	get_gatherable_items "통나무"
-get_alterable_items.json	0	81	15368	get_alterable_items
-get_alterable_items.mushroom.json	0	82	3074	get_alterable_items "버섯"
-get_altering_works.json	0	82	4747	get_altering_works
-get_craftable_items.json	0	116	504264	get_craftable_items
-get_craftable_items.spiderweb.json	0	64	577	get_craftable_items "거미줄"
+file	exit	ms	bytes	command	body
+capabilities.json	0	684	25159	capabilities	
+get_current_environment.json	0	70	326	get_current_environment	
+get_activity.json	0	83	1147	get_activity	
+get_my_info.json	0	81	1533	get_my_info	
+get_quests.json	0	82	4	get_quests	
+get_currencies.json	0	82	1883	get_currencies	
+get_near_npcs.json	0	82	437	get_near_npcs	
+get_near_pcs.json	0	82	1290	get_near_pcs	
+get_inventory.json	0	82	140	get_inventory	
+get_music_scores.json	0	83	17906	get_music_scores	
+get_instruments.json	0	81	2386	get_instruments	
+get_items.json	0	89	132485	get_items	
+get_items.ingredient.json	0	76	69258	get_items	{"category":"Ingredient"}
+get_social_actions.json	0	86	13621	get_social_actions	
+get_daily_missions.json	0	81	2301	get_daily_missions	
+get_weekly_missions.json	0	82	3303	get_weekly_missions	
+get_gatherable_items.json	0	86	12733	get_gatherable_items	
+get_gatherable_items.log.json	0	80	554	get_gatherable_items	통나무
+get_alterable_items.json	0	81	15368	get_alterable_items	
+get_alterable_items.mushroom.json	0	82	3074	get_alterable_items	버섯
+get_altering_works.json	0	82	4747	get_altering_works	
+get_craftable_items.json	0	116	504264	get_craftable_items	
+get_craftable_items.spiderweb.json	0	64	577	get_craftable_items	거미줄
