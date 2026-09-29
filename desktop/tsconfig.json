@@ -10,5 +10,5 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["connector", "tools"]
+  "include": ["agent", "connector", "tools", "main.ts"]
 }
