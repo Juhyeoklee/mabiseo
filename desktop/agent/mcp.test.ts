@@ -12,9 +12,9 @@ const dir = fileURLToPath(new URL("../../recordings/", import.meta.url));
 class Counting implements Connector {
   calls: [string, string | undefined][] = [];
   constructor(private readonly inner: Connector) {}
-  async run(command: string, body?: string): Promise<Json> {
+  async run(command: string, body: string | undefined, timeoutMs: number): Promise<Json> {
     this.calls.push([command, body]);
-    return this.inner.run(command, body);
+    return this.inner.run(command, body, timeoutMs);
   }
 }
 
@@ -64,7 +64,7 @@ describe("카탈로그가 SDK 도구로 바뀐다", () => {
 describe("승인 게이트", () => {
   it("조회 도구는 승인을 묻지 않고 커넥터 응답을 텍스트로 돌려준다", async () => {
     const { connector, asked, call } = await setup(false);
-    expect(await call("get_currencies")).toEqual(await connector.run("get_currencies"));
+    expect(await call("get_currencies")).toEqual(await connector.run("get_currencies", undefined, 30_000));
     expect(asked).toEqual([]);
   });
 

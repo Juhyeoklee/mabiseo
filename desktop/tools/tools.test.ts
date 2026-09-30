@@ -11,9 +11,11 @@ const notFound = { error: "not_found", message: expect.any(String) };
 class Counting implements Connector {
   calls: [string, string | undefined][] = [];
   constructor(private readonly inner: Connector) {}
-  async run(command: string, body?: string): Promise<Json> {
+  timeouts: number[] = [];
+  async run(command: string, body: string | undefined, timeoutMs: number): Promise<Json> {
     this.calls.push([command, body]);
-    return this.inner.run(command, body);
+    this.timeouts.push(timeoutMs);
+    return this.inner.run(command, body, timeoutMs);
   }
 }
 
@@ -39,7 +41,7 @@ async function fakeTools(wings: number) {
 describe("조회 도구는 가짜 커넥터의 녹화를 그대로 돌려준다", () => {
   it("본문 없는 조회", async () => {
     const { tools, connector } = await fakeTools(0);
-    expect(await tools.call("get_my_info")).toEqual(await connector.run("get_my_info"));
+    expect(await tools.call("get_my_info")).toEqual(await connector.run("get_my_info", undefined, 30_000));
     expect(connector.calls.at(-1)).toEqual(["get_my_info", undefined]);
   });
 
@@ -57,6 +59,17 @@ describe("조회 도구는 가짜 커넥터의 녹화를 그대로 돌려준다"
     expect(connector.calls.at(-1)).toEqual(["get_gatherable_items", "통나무"]);
     await tools.call("get_gatherable_items", { filter: "" });
     expect(connector.calls.at(-1)).toEqual(["get_gatherable_items", undefined]);
+  });
+});
+
+describe("커넥터에 넘기는 시간 한도", () => {
+  it("조회는 1분 안에 끊고, 맡기기는 채집 100개의 상한 15분을 넘도록 기다린다", async () => {
+    const { tools, connector } = await fakeTools(10);
+    await tools.call("get_activity");
+    await tools.call("stand_up");
+    const [query, execute] = connector.timeouts;
+    expect(query).toBeLessThanOrEqual(60_000);
+    expect(execute).toBeGreaterThanOrEqual(15 * 60_000);
   });
 });
 

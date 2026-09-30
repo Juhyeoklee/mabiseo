@@ -3,6 +3,12 @@ import { freeRejections, spec, type ToolName, type ToolSpec } from "./catalog.js
 
 export type ToolInput = Readonly<Record<string, string | number | undefined>>;
 
+// 조회는 호출당 약 0.1초, 게임이 꺼져 있으면 약 5초 뒤 스스로 끝난다(recordings/index.tsv · recordings/game-off/index.tsv)
+const queryTimeoutMs = 30_000;
+
+// 맡기기는 CLI가 이동 · 작업 · 보상 수령까지 끝날 때까지 블록한다(recordings/capabilities.json의 Note). 채집 100개는 2~15분(공지 3541579)
+const executeTimeoutMs = 30 * 60_000;
+
 export class Tools {
   private rejected = new Set<string>();
   private running: string | undefined;
@@ -24,7 +30,7 @@ export class Tools {
     const body = encode(tool, input);
     const key = body ? `${name} ${body}` : name;
     if (tool.kind === "query") {
-      const response = await this.connector.run(name, body);
+      const response = await this.connector.run(name, body, queryTimeoutMs);
       this.rejected.clear();
       return response;
     }
@@ -41,7 +47,7 @@ export class Tools {
 
     this.running = key;
     try {
-      const response = await this.connector.run(name, body);
+      const response = await this.connector.run(name, body, executeTimeoutMs);
       if (isRefused(response)) this.rejected.add(key);
       if (!isFree(response)) this.wingsLeft -= tool.wings;
       return response;

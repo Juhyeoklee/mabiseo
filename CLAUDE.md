@@ -44,7 +44,7 @@ scripts/    win-setup(실행기 설치) · win-exec(로그인 세션 실행) · 
 ## 작업 방식
 
 - 매 세션은 `/kickoff`로 시작하고 `/review`로 닫는다
-- 가짜 커넥터로 먼저 만든다. 기본값은 가짜, 실물은 Windows에서만 켜진다. 실패 재현은 `--fail=wings|bag|popup|offline|login`
+- 가짜 커넥터로 먼저 만든다. 기본값은 가짜, 실물(`--real`)은 Windows에서만 켜진다. 실패 재현은 `--fail=wings|bag|popup|offline|login`
 - 관측은 에이전트가, 입력(탭 · 스크롤 · PC 화면 확인)은 사용자에게 요청한다
 - 기존 코드의 결함에 맞추느라 새 코드가 기이해지면 우회를 완성하지 말고 멈춘다
 - Windows는 `ssh mabiseo-win`으로 닿는다. SSH 세션(세션 0)은 게임 파이프에 닿지 못하므로, 게임을 건드리는 명령은 `scripts/win-exec`가 로그인 세션의 실행기(작업 스케줄러 작업 `mabiseo-run`)를 깨워 돌린다. `scripts/win <명령>`은 세션 브랜치 체크아웃까지 얹은 것이고, `scripts/win-setup`이 실행기를 한 번 설치한다
