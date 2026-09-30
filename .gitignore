@@ -12,3 +12,4 @@ out/
 ios/App/*.xcodeproj
 ios/App/*.xcworkspace
 ios/App/Derived/
+.claude/design/

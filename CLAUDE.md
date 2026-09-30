@@ -32,7 +32,7 @@ scripts/    win-setup(실행기 설치) · win-exec(로그인 세션 실행) · 
 
 - 이슈 본문은 세 줄이다. 무엇 · 완료 조건 · 실물 관문. 서사를 쓰지 않는다
 - 판정 불가는 `재판정` 라벨 이슈로 둔다. 제목에 재판정 사건을 적는다
-- 세션 플랜은 세션 안에서 세우고 버린다. 결과는 커밋 메시지로
+- 세션 플랜은 `.claude/design/`에 설계안으로 세우고 닫을 때 지운다. 결과는 커밋 메시지로
 - 세션마다 이슈 댓글 둘. 킥오프 때 닫힘 조건, 닫을 때 결과 한 줄. 인계문을 쓰지 않는다
 
 ## 규칙
@@ -44,6 +44,7 @@ scripts/    win-setup(실행기 설치) · win-exec(로그인 세션 실행) · 
 ## 작업 방식
 
 - 매 세션은 `/kickoff`로 시작하고 `/review`로 닫는다
+- 설계는 이 세션이, 구현은 `.claude/agents/mabiseo-implementer.md`가 한다. 설계안의 인터페이스 · 테스트 명세 · 멈춤 조건이 다 채워질 때만 위임한다. 구현자는 판단하지 않고 멈춘다
 - 가짜 커넥터로 먼저 만든다. 기본값은 가짜, 실물(`--real`)은 Windows에서만 켜진다. 실패 재현은 `--fail=wings|bag|popup|offline|login`
 - 관측은 에이전트가, 입력(탭 · 스크롤 · PC 화면 확인)은 사용자에게 요청한다
 - 기존 코드의 결함에 맞추느라 새 코드가 기이해지면 우회를 완성하지 말고 멈춘다
@@ -75,4 +76,4 @@ scripts/    win-setup(실행기 설치) · win-exec(로그인 세션 실행) · 
 
 - 인계문 · 플래닝 세션 · 검산 세션 · 정리 세션 · 규칙 표본 측정
 - 참고 저장소의 코드. 도메인 지식의 출처로만 쓴다
-- 전역 `~/.claude/agents/code-reviewer.md`는 다른 프로젝트 전용이다. 부르지 않는다. 코드 리뷰는 `.claude/agents/mabiseo-reviewer.md`
+- 전역 `~/.claude/agents/code-reviewer.md`는 다른 프로젝트 전용이다. 부르지 않는다. 코드 리뷰는 `.claude/agents/mabiseo-reviewer.md`, 구현은 `.claude/agents/mabiseo-implementer.md`
