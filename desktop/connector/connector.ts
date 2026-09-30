@@ -3,5 +3,5 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 export type FailMode = "login" | "offline";
 
 export interface Connector {
-  run(command: string, body?: string): Promise<Json>;
+  run(command: string, body: string | undefined, timeoutMs: number): Promise<Json>;
 }
