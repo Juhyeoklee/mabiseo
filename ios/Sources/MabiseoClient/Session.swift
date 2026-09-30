@@ -140,12 +140,16 @@ public final class Session {
       approval = PendingApproval(id: id, tool: tool, input: input, wings: wings)
     case .event(let id, let event):
       guard id == askId else { return }
-      append(.agent(event))
+      if case .progress = event, let last = entries.last, case .agent(.progress) = last.body {
+        entries[entries.count - 1] = Entry(id: last.id, body: .agent(event))
+      } else {
+        append(.agent(event))
+      }
       switch event {
       case .done, .failed:
         askId = nil
         approval = nil
-      case .started, .text, .tool, .toolResult:
+      case .started, .text, .tool, .toolResult, .progress:
         break
       }
     }

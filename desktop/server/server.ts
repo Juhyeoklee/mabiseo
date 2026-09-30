@@ -75,7 +75,10 @@ export class Server {
       case "approve":
         return this.approvals.get(message.id)?.resolve(message.allow);
       case "cancel":
-        if (this.run?.id === message.id) this.cancel(this.run);
+        if (this.run?.id === message.id) {
+          this.cancel(this.run);
+          this.stopActivity();
+        }
         return;
     }
   }
@@ -134,6 +137,10 @@ export class Server {
   private cancel(run: Run): void {
     run.abort.abort();
     this.releaseApprovals(run);
+  }
+
+  private stopActivity(): void {
+    void this.options.tools.cancel().catch((error) => console.error(`[중단] 활동 중단 실패: ${errorMessage(error)}`));
   }
 
   private releaseApprovals(run: Run): void {

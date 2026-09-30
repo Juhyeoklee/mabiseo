@@ -1,12 +1,21 @@
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Connector, Json } from "../connector/connector.js";
 import { FakeConnector } from "../connector/fake.js";
+import { readJson } from "../connector/recordings.js";
+import type { Progress } from "../jobs/jobs.js";
 import { Tools } from "./tools.js";
 
 const dir = fileURLToPath(new URL("../../recordings/", import.meta.url));
 const unknownItem = { displayName: "마비서없는아이템" };
 const notFound = { error: "not_found", message: expect.any(String) };
+const idle = (await readJson(dir, "get_activity.json")) as { [key: string]: Json; Mode: { [key: string]: Json } };
+const fishing: Json = { ...idle, Mode: { ...idle.Mode, MainButtonState: "Fishing" } };
+const executes = (calls: string[]): string[] => calls.filter((c) => c !== "get_activity");
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 class Counting implements Connector {
   calls: [string, string | undefined][] = [];
@@ -26,11 +35,25 @@ class Slow implements Connector {
   private pending: ((value: Json) => void)[] = [];
   run(command: string): Promise<Json> {
     this.calls.push(command);
+    if (command === "get_activity") return Promise.resolve(idle);
     return new Promise((resolve) => this.pending.push(resolve));
   }
   finish(value: Json): void {
     this.pending.shift()?.(value);
   }
+}
+
+function fishingConnector() {
+  const state = { fishing: true };
+  const connector = new Counting({
+    run: async (command) => {
+      if (command === "execute_gathering") return { result: "started" };
+      if (command === "get_activity") return state.fishing ? fishing : idle;
+      if (command === "stop_action") state.fishing = false;
+      return { message: "" };
+    },
+  });
+  return { connector, state };
 }
 
 async function fakeTools(wings: number) {
@@ -98,7 +121,7 @@ describe("날개 예산", () => {
     await tools.call("execute_gathering", { displayName: "통나무" });
     expect(tools.wings).toBe(0);
     expect(await tools.call("execute_gathering", { displayName: "통나무" })).toMatchObject({ error: "wings_budget" });
-    expect(connector.calls).toHaveLength(1);
+    expect(executes(connector.calls.map(([c]) => c))).toEqual(["execute_gathering"]);
   });
 
   it("시작된 뒤 끊긴 가공 · 제작(timeout · canceled)은 거부와 같은 두 키로 와도 쓴 것으로 센다", async () => {
@@ -134,7 +157,7 @@ describe("맡기기는 한 번에 하나다", () => {
     const second = tools.call("stand_up");
     slow.finish({ message: "" });
     await second;
-    expect(slow.calls).toEqual(["execute_gathering", "stand_up"]);
+    expect(executes(slow.calls)).toEqual(["execute_gathering", "stand_up"]);
   });
 
   it("맡기기가 도는 동안 조회는 된다", async () => {
@@ -142,10 +165,96 @@ describe("맡기기는 한 번에 하나다", () => {
     const tools = new Tools(slow, 10);
     const first = tools.call("execute_gathering", { displayName: "통나무" });
     const query = tools.call("get_activity");
-    expect(slow.calls).toEqual(["execute_gathering", "get_activity"]);
+    expect(slow.calls).toContain("get_activity");
     slow.finish({ result: "completed" });
-    slow.finish({ ActionType: "gathering" });
     await Promise.all([first, query]);
+  });
+
+  it("맡기기가 도는 동안 stop_action은 busy를 통과해 커넥터에 닿는다", async () => {
+    const slow = new Slow();
+    const tools = new Tools(slow, 10);
+    const first = tools.call("execute_gathering", { displayName: "통나무" });
+    const stop = tools.call("stop_action");
+    expect(slow.calls).toContain("stop_action");
+    slow.finish({ result: "stopped" });
+    slow.finish({ message: "" });
+    expect(await stop).toEqual({ message: "" });
+    await first;
+    const next = tools.call("stand_up");
+    expect(slow.calls.at(-1)).toBe("stand_up");
+    slow.finish({ message: "" });
+    await next;
+  });
+
+  it("started로 돌아온 낚시는 get_activity가 활동 중인 동안 다음 맡기기를 busy로 거절하고 idle이 되면 받는다", async () => {
+    vi.useFakeTimers();
+    const { connector, state } = fishingConnector();
+    const tools = new Tools(connector, 10);
+    expect(await tools.call("execute_gathering", { displayName: "통나무" })).toEqual({ result: "started" });
+    expect(await tools.call("stand_up")).toMatchObject({ error: "busy" });
+    expect(connector.calls.map(([c]) => c)).not.toContain("stand_up");
+    state.fishing = false;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await tools.call("stand_up")).toEqual({ message: "" });
+    expect(connector.calls.map(([c]) => c)).toContain("stand_up");
+  });
+
+  it("진행은 도구 이름과 경과 시간을 싣고 watch로 흐른다", async () => {
+    vi.useFakeTimers();
+    const slow = new Slow();
+    const tools = new Tools(slow, 10);
+    const progress: Progress[] = [];
+    tools.watch((p) => progress.push(p));
+    const first = tools.call("execute_gathering", { displayName: "통나무" });
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(progress).toEqual([
+      { activity: "execute_gathering", elapsedSeconds: 20 },
+      { activity: "execute_gathering", elapsedSeconds: 40 },
+    ]);
+    slow.finish({ result: "completed" });
+    await first;
+  });
+});
+
+describe("cancel은 stop_action이다", () => {
+  it("활동이 없으면 cancel은 커넥터를 부르지 않고 undefined다", async () => {
+    const { tools, connector } = await fakeTools(10);
+    expect(await tools.cancel()).toBeUndefined();
+    expect(connector.calls).toEqual([]);
+  });
+
+  it("cancel은 붙든 활동에 stop_action을 부르고 idle이 되면 다음 주기를 기다리지 않고 푼다", async () => {
+    vi.useFakeTimers();
+    const { connector } = fishingConnector();
+    const tools = new Tools(connector, 10);
+    expect(await tools.call("execute_gathering", { displayName: "통나무" })).toEqual({ result: "started" });
+    expect(await tools.cancel()).toEqual({ message: "" });
+    expect(connector.calls.map(([c]) => c)).toContain("stop_action");
+    expect(await tools.call("stand_up")).toEqual({ message: "" });
+    expect(connector.calls.map(([c]) => c)).toContain("stand_up");
+  });
+
+  it("stop_action의 거부도 재거부 차단에 잡힌다", async () => {
+    const { tools } = await fakeTools(10);
+    expect(await tools.call("stop_action")).toMatchObject({ error: "invalid_state" });
+    expect(await tools.call("stop_action")).toMatchObject({ error: "repeated_rejection" });
+  });
+});
+
+describe("폴링은 보호 장치를 건드리지 않는다", () => {
+  it("폴링은 재거부 차단을 풀지 않는다", async () => {
+    const connector = new Counting({
+      run: async (command) => {
+        if (command === "execute_gathering") return { error: "not_found", message: "" };
+        if (command === "get_activity") return idle;
+        return { message: "" };
+      },
+    });
+    const tools = new Tools(connector, 10);
+    expect(await tools.call("execute_gathering", unknownItem)).toMatchObject({ error: "not_found" });
+    expect(await tools.call("stand_up")).toEqual({ message: "" });
+    expect(connector.calls.map(([c]) => c)).toContain("get_activity");
+    expect(await tools.call("execute_gathering", unknownItem)).toMatchObject({ error: "repeated_rejection" });
   });
 });
 

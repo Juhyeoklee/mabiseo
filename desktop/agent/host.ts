@@ -7,6 +7,7 @@ export type AgentEvent =
   | { kind: "text"; text: string }
   | { kind: "tool"; name: string; input: unknown }
   | { kind: "tool_result"; text: string }
+  | { kind: "progress"; activity: string; elapsedSeconds: number }
   | { kind: "done"; text: string; turns: number; costUsd: number }
   | { kind: "failed"; reason: string };
 
@@ -40,8 +41,13 @@ export async function ask(prompt: string, session: Session): Promise<void> {
       ...(session.abort && { abortController: session.abort }),
     },
   });
-  for await (const message of stream) {
-    for (const event of events(message)) session.onEvent(event);
+  const unwatch = session.tools.watch((progress) => session.onEvent({ kind: "progress", ...progress }));
+  try {
+    for await (const message of stream) {
+      for (const event of events(message)) session.onEvent(event);
+    }
+  } finally {
+    unwatch();
   }
 }
 

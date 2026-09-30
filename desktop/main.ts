@@ -75,6 +75,9 @@ function print(event: AgentEvent): void {
     case "tool_result":
       console.log(`[결과] ${event.text}`);
       break;
+    case "progress":
+      console.log(`[진행] ${event.activity} · ${event.elapsedSeconds}초`);
+      break;
     case "done":
       console.log(`[끝] ${event.turns}턴 · $${event.costUsd.toFixed(4)}`);
       break;

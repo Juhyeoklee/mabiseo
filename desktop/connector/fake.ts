@@ -27,6 +27,7 @@ function key(command: string, body?: string): string {
   return body ? `${command} ${body}` : command;
 }
 
+// 실물 CLI의 거부는 평평한 {error, message}다(execute_gathering.unknown-name.json). 감싸면 tools/가 거부로 못 본다
 function notRecorded(command: string, body?: string): Json {
-  return { status: "rejected", body: { error: "not_recorded", message: `녹화가 없다: ${key(command, body)}` } };
+  return { error: "not_recorded", message: `녹화가 없다: ${key(command, body)}` };
 }
