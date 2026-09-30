@@ -37,8 +37,7 @@ describe("가짜 커넥터", () => {
   it("녹화가 없는 조합은 던지지 않고 not_recorded 값을 돌려준다", async () => {
     const fake = await FakeConnector.fromDirectory(dir);
     expect(await fake.run("get_gatherable_items", "버섯")).toMatchObject({
-      status: "rejected",
-      body: { error: "not_recorded" },
+      error: "not_recorded",
     });
   });
 });
@@ -85,7 +84,7 @@ describe("--fail=login: 캐릭터 선택 화면", () => {
 
   it("그 상황에 녹화가 없는 명령은 지어내지 않고 not_recorded다", async () => {
     const fake = await FakeConnector.fromDirectory(dir, "login");
-    expect(await fake.run("get_items")).toMatchObject({ status: "rejected", body: { error: "not_recorded" } });
+    expect(await fake.run("get_items")).toMatchObject({ error: "not_recorded" });
   });
 });
 
@@ -105,6 +104,6 @@ describe("--fail=offline: 게임 꺼짐", () => {
 
   it("그 상황에 녹화가 없는 명령은 지어내지 않고 not_recorded다", async () => {
     const fake = await FakeConnector.fromDirectory(dir, "offline");
-    expect(await fake.run("get_items")).toMatchObject({ status: "rejected", body: { error: "not_recorded" } });
+    expect(await fake.run("get_items")).toMatchObject({ error: "not_recorded" });
   });
 });

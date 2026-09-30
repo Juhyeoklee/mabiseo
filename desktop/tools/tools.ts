@@ -1,4 +1,5 @@
 import type { Connector, Json } from "../connector/connector.js";
+import { Jobs, type Listener } from "../jobs/jobs.js";
 import { freeRejections, spec, type ToolName, type ToolSpec } from "./catalog.js";
 
 export type ToolInput = Readonly<Record<string, string | number | undefined>>;
@@ -9,17 +10,35 @@ const queryTimeoutMs = 30_000;
 // 맡기기는 CLI가 이동 · 작업 · 보상 수령까지 끝날 때까지 블록한다(recordings/capabilities.json의 Note). 채집 100개는 2~15분(공지 3541579)
 const executeTimeoutMs = 30 * 60_000;
 
+const progressIntervalMs = 20_000;
+
 export class Tools {
   private rejected = new Set<string>();
-  private running: string | undefined;
+  private readonly jobs: Jobs;
 
   constructor(
     private readonly connector: Connector,
     private wingsLeft: number,
-  ) {}
+  ) {
+    this.jobs = new Jobs({
+      // 폴링을 call로 돌리면 조회가 재거부 차단을 풀어 주기마다 같은 거부 호출이 다시 통한다
+      poll: () => connector.run("get_activity", undefined, queryTimeoutMs),
+      started: (response) => !isRefused(response),
+      intervalMs: progressIntervalMs,
+    });
+  }
 
   get wings(): number {
     return this.wingsLeft;
+  }
+
+  watch(listener: Listener): () => void {
+    return this.jobs.watch(listener);
+  }
+
+  async cancel(): Promise<Json | undefined> {
+    if (!this.jobs.current) return undefined;
+    return this.call("stop_action");
   }
 
   async call(name: ToolName, input: ToolInput = {}): Promise<Json> {
@@ -35,8 +54,9 @@ export class Tools {
       return response;
     }
 
-    if (this.running) {
-      return { error: "busy", message: `${this.running}이 끝나기 전에는 다른 맡기기를 부르지 않는다. 새 활동이 앞 활동을 취소한다` };
+    const current = this.jobs.current;
+    if (current && name !== "stop_action") {
+      return { error: "busy", message: `${current.name}이 끝나기 전에는 다른 맡기기를 부르지 않는다. 새 활동이 앞 활동을 취소한다` };
     }
     if (this.rejected.has(key)) {
       return { error: "repeated_rejection", message: `방금 거부된 호출이다. 조회로 상태를 확인한 뒤에 다시 부른다: ${key}` };
@@ -45,15 +65,16 @@ export class Tools {
       return { error: "wings_budget", message: `이 세션의 날개 예산이 ${this.wingsLeft}개 남아 ${name}(${tool.wings}개)을 부를 수 없다` };
     }
 
-    this.running = key;
-    try {
-      const response = await this.connector.run(name, body, executeTimeoutMs);
-      if (isRefused(response)) this.rejected.add(key);
-      if (!isFree(response)) this.wingsLeft -= tool.wings;
-      return response;
-    } finally {
-      this.running = undefined;
+    let response: Json;
+    if (name === "stop_action") {
+      response = await this.connector.run(name, body, executeTimeoutMs);
+      await this.jobs.recheck();
+    } else {
+      response = await this.jobs.run(name, () => this.connector.run(name, body, executeTimeoutMs));
     }
+    if (isRefused(response)) this.rejected.add(key);
+    if (!isFree(response)) this.wingsLeft -= tool.wings;
+    return response;
   }
 }
 

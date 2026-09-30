@@ -140,6 +140,8 @@ private struct EntryView: View {
       caption("\(name) \(describe(input))")
     case .agent(.toolResult(let text)):
       caption(text, lines: 3)
+    case .agent(.progress(let activity, let elapsedSeconds)):
+      caption("\(activity) 진행 중 · \(elapsedSeconds / 60)분 \(elapsedSeconds % 60)초")
     case .agent(.failed(let reason)):
       caption(failureText(reason)).foregroundStyle(.red)
     }

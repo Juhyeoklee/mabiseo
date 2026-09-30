@@ -17,6 +17,7 @@
 | 데스크탑 | Windows (게임·커넥터 옆). 제안: Electron + Claude Agent SDK (TS) |
 | 개발 | 맥에서 개발, Windows는 실행만 |
 | 에이전트 | Claude Agent SDK(TS). 도구는 `tools/` 카탈로그를 in-process MCP 서버로 노출. 개발 단계 인증은 개발자의 API 키(환경 변수 · 판정 2026-09-29). 최종 사용자의 인증 방식은 열린 것(§5). 모델은 SDK 기본값 |
+| 중단 | 폰의 cancel은 에이전트를 끊고 붙든 활동에 stop_action을 보낸다. 소켓 끊김은 에이전트만 끊고 활동은 잇는다. 날개를 이미 쓴 활동을 앱 백그라운드로 버리지 않는다(판정 2026-09-30) |
 
 **외부 제약** — 넥슨 공지 [AI 커넥터 사전 안내](https://mabinogimobile.nexon.com/News/Notice/3541579) (2026-09-09 · Beta)
 

@@ -13,11 +13,12 @@ public enum AgentEvent: Codable, Equatable, Sendable {
   case text(String)
   case tool(name: String, input: ToolInput)
   case toolResult(text: String)
+  case progress(activity: String, elapsedSeconds: Int)
   case done(text: String, turns: Int, costUsd: Double)
   case failed(reason: String)
 
   private enum Key: String, CodingKey {
-    case kind, model, text, name, input, turns, costUsd, reason
+    case kind, model, text, name, input, activity, elapsedSeconds, turns, costUsd, reason
   }
 
   public init(from decoder: Decoder) throws {
@@ -35,6 +36,11 @@ public enum AgentEvent: Codable, Equatable, Sendable {
     case "tool_result":
       try rejectUnknownKeys(in: decoder, allowed: [Key.kind, .text])
       self = .toolResult(text: try container.decode(String.self, forKey: .text))
+    case "progress":
+      try rejectUnknownKeys(in: decoder, allowed: [Key.kind, .activity, .elapsedSeconds])
+      self = .progress(
+        activity: try container.decode(String.self, forKey: .activity),
+        elapsedSeconds: try container.decode(Int.self, forKey: .elapsedSeconds))
     case "done":
       try rejectUnknownKeys(in: decoder, allowed: [Key.kind, .text, .turns, .costUsd])
       self = .done(
@@ -65,6 +71,10 @@ public enum AgentEvent: Codable, Equatable, Sendable {
     case .toolResult(let text):
       try container.encode("tool_result", forKey: .kind)
       try container.encode(text, forKey: .text)
+    case .progress(let activity, let elapsedSeconds):
+      try container.encode("progress", forKey: .kind)
+      try container.encode(activity, forKey: .activity)
+      try container.encode(elapsedSeconds, forKey: .elapsedSeconds)
     case .done(let text, let turns, let costUsd):
       try container.encode("done", forKey: .kind)
       try container.encode(text, forKey: .text)

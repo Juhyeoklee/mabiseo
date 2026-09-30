@@ -15,6 +15,7 @@ export const agentEvent = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("text"), text: z.string() }),
   z.strictObject({ kind: z.literal("tool"), name: z.string(), input: toolInput }),
   z.strictObject({ kind: z.literal("tool_result"), text: z.string() }),
+  z.strictObject({ kind: z.literal("progress"), activity: z.string(), elapsedSeconds: z.int().nonnegative() }),
   z.strictObject({ kind: z.literal("done"), text: z.string(), turns: z.int().nonnegative(), costUsd: z.number().nonnegative() }),
   z.strictObject({ kind: z.literal("failed"), reason: z.string() }),
 ]);

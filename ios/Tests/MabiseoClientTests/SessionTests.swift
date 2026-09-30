@@ -108,6 +108,20 @@ func askStreamsEvents() async throws {
 }
 
 @MainActor
+@Test("진행 event는 쌓이지 않고 마지막 진행 줄을 덮어쓴다")
+func progressReplacesLastProgress() async throws {
+  let transport = FakeTransport()
+  let session = try await pairedSession(transport: transport)
+  await session.ask("통나무 채집해")
+  transport.push(try fixture("event.tool"))
+  transport.push(#"{"type":"event","id":"a1","event":{"kind":"progress","activity":"execute_gathering","elapsedSeconds":20}}"#)
+  transport.push(try fixture("event.progress"))
+  await settle { session.entries.last?.body == .agent(.progress(activity: "execute_gathering", elapsedSeconds: 40)) }
+  #expect(session.entries.count == 3)
+  #expect(session.busy)
+}
+
+@MainActor
 @Test("다른 id의 event와 승인 요청은 무시한다")
 func staleMessagesAreIgnored() async throws {
   let transport = FakeTransport()

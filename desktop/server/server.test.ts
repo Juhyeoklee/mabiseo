@@ -3,8 +3,9 @@ import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { desktopMessage, type DesktopMessage, type PhoneMessage } from "../../protocol/messages.js";
 import type { AgentEvent, Session } from "../agent/host.js";
-import type { Connector } from "../connector/connector.js";
+import type { Connector, Json } from "../connector/connector.js";
 import { FakeConnector } from "../connector/fake.js";
+import { readJson } from "../connector/recordings.js";
 import { Tools } from "../tools/tools.js";
 import { Server, type Ask } from "./server.js";
 
@@ -333,6 +334,135 @@ describe("승인", () => {
     again.send({ type: "ask", id: "a2", text: "다음" });
     expect(await again.next()).toMatchObject({ type: "approval_request", askId: "a2" });
     again.close();
+    await server.close();
+  });
+});
+
+class Gathering implements Connector {
+  calls: string[] = [];
+  private pending: ((value: Json) => void) | undefined;
+
+  private constructor(
+    private readonly fake: FakeConnector,
+    private readonly activity: Json,
+  ) {}
+
+  static async load(): Promise<Gathering> {
+    return new Gathering(await FakeConnector.fromDirectory(recordings), await readJson(recordings, "get_activity.json"));
+  }
+
+  run(command: string, body: string | undefined): Promise<Json> {
+    this.calls.push(command);
+    switch (command) {
+      case "execute_gathering":
+        return new Promise((resolve) => (this.pending = resolve));
+      case "stop_action":
+        this.finish();
+        return Promise.resolve({ message: "" });
+      case "get_activity":
+        return Promise.resolve(this.activity);
+      default:
+        return this.fake.run(command, body);
+    }
+  }
+
+  finish(): void {
+    this.pending?.({ result: "stopped", gained: 3, target: 100 });
+    this.pending = undefined;
+  }
+}
+
+class Counting implements Connector {
+  calls: [string, string | undefined][] = [];
+  constructor(private readonly inner: Connector) {}
+  async run(command: string, body: string | undefined, timeoutMs: number): Promise<Json> {
+    this.calls.push([command, body]);
+    return this.inner.run(command, body, timeoutMs);
+  }
+}
+
+describe("중단", () => {
+  let gathered: Promise<Json> | undefined;
+  const gatheringUntilStopped: Ask = async (_prompt, session) => {
+    session.onEvent({ kind: "started", model: "fake" });
+    gathered = session.tools.call("execute_gathering", { displayName: "통나무" });
+    await gathered;
+    if (session.abort?.signal.aborted) session.onEvent({ kind: "failed", reason: "aborted by sdk" });
+    else session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
+  };
+
+  async function serveGathering(): Promise<{ server: Server; tools: Tools; connector: Gathering }> {
+    const connector = await Gathering.load();
+    const tools = new Tools(connector, 10);
+    const server = await Server.start({ port: 0, code, pcName, tools, ask: gatheringUntilStopped });
+    return { server, tools, connector };
+  }
+
+  beforeEach(() => (gathered = undefined));
+
+  test("cancel은 붙든 활동에 stop_action을 보낸다", async () => {
+    const { server, tools, connector } = await serveGathering();
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "통나무 채집해" });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "started" } });
+    phone.send({ type: "cancel", id: "a1" });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", event: { kind: "failed", reason: "cancelled" } });
+    expect((await phone.next()).type).toBe("status");
+    expect(connector.calls).toContain("stop_action");
+    expect(await gathered).toEqual({ result: "stopped", gained: 3, target: 100 });
+    expect(await tools.cancel()).toBeUndefined();
+    phone.close();
+    await server.close();
+  });
+
+  test("폰이 끊겨도 활동은 잇는다", async () => {
+    const { server, connector } = await serveGathering();
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "통나무 채집해" });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "started" } });
+    phone.close();
+    await phone.closed;
+    const again = await Phone.connect(server.port);
+    await again.pair();
+    expect(connector.calls).not.toContain("stop_action");
+    connector.finish();
+    await gathered;
+    again.close();
+    await server.close();
+  });
+
+  test("활동이 없으면 cancel은 stop_action을 보내지 않는다", async () => {
+    const connector = new Counting(await FakeConnector.fromDirectory(recordings));
+    const tools = new Tools(connector, 10);
+    const server = await Server.start({ port: 0, code, pcName, tools, ask: hangingAsk });
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
+    await phone.next();
+    phone.send({ type: "cancel", id: "a1" });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", event: { kind: "failed", reason: "cancelled" } });
+    expect(connector.calls.map(([command]) => command)).not.toContain("stop_action");
+    phone.close();
+    await server.close();
+  });
+
+  test("진행 event는 ask의 id로 폰에 간다", async () => {
+    const ask: Ask = async (_prompt, session) => {
+      session.onEvent({ kind: "progress", activity: "execute_gathering", elapsedSeconds: 20 });
+      session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
+    };
+    const { server } = await serve(ask);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "채집 어디까지 했어" });
+    expect(await phone.next()).toEqual({
+      type: "event",
+      id: "a1",
+      event: { kind: "progress", activity: "execute_gathering", elapsedSeconds: 20 },
+    });
+    phone.close();
     await server.close();
   });
 });

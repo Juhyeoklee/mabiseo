@@ -1,0 +1,9 @@
+{
+  "type": "event",
+  "id": "a1",
+  "event": {
+    "kind": "progress",
+    "activity": "execute_gathering",
+    "elapsedSeconds": 40
+  }
+}
