@@ -1,0 +1,5 @@
+{
+  "error": "blocked",
+  "kind": "dead",
+  "message": "The character is dead or reviving, so the action cannot continue. The user must pick a revive option first."
+}

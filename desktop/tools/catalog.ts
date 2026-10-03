@@ -132,3 +132,6 @@ export const freeRejections: ReadonlySet<string> = new Set([
   "tool_missing",
   "required_consumable_missing",
 ]);
+
+// 시작된 뒤에만 나오는 코드다(recordings/capabilities.json의 interrupted after starting 목록). 날개는 이미 나갔다
+export const afterStartRejections: ReadonlySet<string> = new Set(["timeout", "canceled"]);

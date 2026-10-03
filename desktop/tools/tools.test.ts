@@ -11,7 +11,7 @@ const unknownItem = { displayName: "마비서없는아이템" };
 const notFound = { error: "not_found", message: expect.any(String) };
 const idle = (await readJson(dir, "get_activity.json")) as { [key: string]: Json; Mode: { [key: string]: Json } };
 const fishing: Json = { ...idle, Mode: { ...idle.Mode, MainButtonState: "Fishing" } };
-const executes = (calls: string[]): string[] => calls.filter((c) => c !== "get_activity");
+const executes = (calls: string[]): string[] => calls.filter((c) => c !== "get_activity" && c !== "get_currencies");
 
 afterEach(() => {
   vi.useRealTimers();
@@ -35,12 +35,28 @@ class Slow implements Connector {
   private pending: ((value: Json) => void)[] = [];
   run(command: string): Promise<Json> {
     this.calls.push(command);
-    if (command === "get_activity") return Promise.resolve(idle);
+    if (command === "get_activity" || command === "get_currencies") return Promise.resolve(idle);
     return new Promise((resolve) => this.pending.push(resolve));
   }
   finish(value: Json): void {
     this.pending.shift()?.(value);
   }
+}
+
+const started = (slow: Slow): Promise<void> => vi.waitFor(() => expect(slow.calls).toContain("execute_gathering"));
+
+const popupBlocked: Json = { error: "blocked", kind: "popup", message: "" };
+const wingsOf = (amount: number): Json => [{ DisplayName: "정령의 날개", Amount: amount }];
+
+function refusing(respond: () => Json, amounts: number[]): Connector {
+  let last: number | undefined;
+  return {
+    run: async (command) => {
+      if (command !== "get_currencies") return respond();
+      last = amounts.shift() ?? last;
+      return last === undefined ? { error: "unreadable", message: "" } : wingsOf(last);
+    },
+  };
 }
 
 function fishingConnector() {
@@ -124,18 +140,110 @@ describe("날개 예산", () => {
     expect(executes(connector.calls.map(([c]) => c))).toEqual(["execute_gathering"]);
   });
 
-  it("시작된 뒤 끊긴 가공 · 제작(timeout · canceled)은 거부와 같은 두 키로 와도 쓴 것으로 센다", async () => {
+  it("시작된 뒤에만 나오는 timeout · canceled는 실제 날개 수가 그대로로 읽혀도 쓴 것으로 센다", async () => {
     const errors = ["timeout", "canceled"];
-    const tools = new Tools({ run: async () => ({ error: errors.shift() ?? "", message: "" }) }, 10);
+    const tools = new Tools(refusing(() => ({ error: errors.shift() ?? "", message: "" }), [100]), 10);
     await tools.call("execute_altering", { displayName: "거미줄" });
     await tools.call("execute_crafting", { displayName: "거미줄" });
     expect(tools.wings).toBe(0);
   });
 
-  it("시작 전과 후 양쪽에 나오는 blocked는 쓴 것으로 센다", async () => {
-    const tools = new Tools({ run: async () => ({ error: "blocked", kind: "popup", message: "" }) }, 10);
+  it("시작 전과 후 양쪽에 나오는 blocked는 실제 날개 수를 못 읽으면 쓴 것으로 센다", async () => {
+    const tools = new Tools({ run: async () => popupBlocked }, 10);
     await tools.call("execute_crafting", { displayName: "거미줄" });
     expect(tools.wings).toBe(5);
+  });
+
+  it("게임이 응답에 적은 cost가 있으면 도구의 정가가 아니라 그만큼만 깎는다", async () => {
+    const tools = new Tools(refusing(() => ({ result: "completed", cost: "정령의 날개 3 spent, 97 left." }), [100]), 10);
+    await tools.call("execute_gathering", { displayName: "통나무" });
+    expect(tools.wings).toBe(7);
+  });
+
+  it("실물 채집의 완료 응답은 cost대로 5개를 깎는다", async () => {
+    const completed = await readJson(dir, "gathering/execute_gathering.json");
+    const tools = new Tools(refusing(() => completed, []), 10);
+    await tools.call("execute_gathering", { displayName: "통나무" });
+    expect(tools.wings).toBe(5);
+  });
+
+  it("부활 대기의 blocked처럼 시작 전에 거부돼 실제 날개가 그대로면 예산이 줄지 않는다", async () => {
+    const currencies = await readJson(dir, "get_currencies.json");
+    const blocked = await readJson(dir, "reviving/execute_gathering.json");
+    const tools = new Tools({ run: async (command) => (command === "get_currencies" ? currencies : blocked) }, 5);
+    expect(await tools.call("execute_gathering", { displayName: "통나무" })).toMatchObject({ error: "blocked", kind: "dead" });
+    expect(tools.wings).toBe(5);
+  });
+
+  it("곧바로 돌아온 blocked에서 실제 날개가 줄었으면 정가가 아니라 그 차이만큼 깎는다", async () => {
+    const tools = new Tools(refusing(() => popupBlocked, [100, 97]), 10);
+    await tools.call("execute_crafting", { displayName: "거미줄" });
+    expect(tools.wings).toBe(7);
+  });
+
+  it("곧바로 돌아온 blocked에서 호출 전 날개만 읽히고 그 뒤는 못 읽으면 쓴 것으로 센다", async () => {
+    let reads = 0;
+    const tools = new Tools(
+      {
+        run: async (command) => {
+          if (command !== "get_currencies") return popupBlocked;
+          reads += 1;
+          return reads === 1 ? wingsOf(100) : { error: "unreadable", message: "" };
+        },
+      },
+      10,
+    );
+    await tools.call("execute_crafting", { displayName: "거미줄" });
+    expect(tools.wings).toBe(5);
+  });
+
+  it("곧바로 돌아온 blocked에서 실제 날개가 오히려 늘어 있으면 예산을 늘리지 않고 그대로 둔다", async () => {
+    const tools = new Tools(refusing(() => popupBlocked, [100, 105]), 10);
+    await tools.call("execute_crafting", { displayName: "거미줄" });
+    expect(tools.wings).toBe(10);
+  });
+
+  it("오래 걸려 돌아온 blocked는 실제 날개가 그대로로 읽혀도 쓴 것으로 센다. 그 사이 늘어난 날개가 쓴 양을 가릴 수 있다", async () => {
+    vi.useFakeTimers();
+    const tools = new Tools(
+      refusing(() => {
+        vi.setSystemTime(Date.now() + 60_000);
+        return popupBlocked;
+      }, [100]),
+      10,
+    );
+    await tools.call("execute_crafting", { displayName: "거미줄" });
+    expect(tools.wings).toBe(5);
+  });
+
+  it("거부 뒤의 날개 조회가 끝나기 전에 들어온 맡기기는 busy로 거절된다. 예산이 아직 안 깎였다", async () => {
+    let release: (value: Json) => void = () => {};
+    const calls: string[] = [];
+    const tools = new Tools(
+      {
+        run: (command) => {
+          calls.push(command);
+          if (command !== "get_currencies") return Promise.resolve(popupBlocked);
+          if (calls.filter((c) => c === "get_currencies").length === 1) return Promise.resolve(wingsOf(100));
+          return new Promise((resolve) => (release = resolve));
+        },
+      },
+      5,
+    );
+    const first = tools.call("execute_crafting", { displayName: "거미줄" });
+    await vi.waitFor(() => expect(calls.filter((c) => c === "get_currencies")).toHaveLength(2));
+    expect(await tools.call("execute_gathering", { displayName: "통나무" })).toMatchObject({ error: "busy" });
+    release(wingsOf(95));
+    await first;
+    expect(tools.wings).toBe(0);
+  });
+
+  it("거부 뒤의 날개 조회는 재거부 차단을 풀지 않는다", async () => {
+    const connector = new Counting(refusing(() => popupBlocked, [100]));
+    const tools = new Tools(connector, 10);
+    await tools.call("execute_crafting", { displayName: "거미줄" });
+    expect(await tools.call("execute_crafting", { displayName: "거미줄" })).toMatchObject({ error: "repeated_rejection" });
+    expect(executes(connector.calls.map(([c]) => c))).toEqual(["execute_crafting"]);
   });
 
   it("게임이 꺼져 있으면 날개가 나가지 않았으므로 예산이 줄지 않는다", async () => {
@@ -151,7 +259,8 @@ describe("맡기기는 한 번에 하나다", () => {
     const tools = new Tools(slow, 10);
     const first = tools.call("execute_gathering", { displayName: "통나무" });
     expect(await tools.call("stand_up")).toMatchObject({ error: "busy" });
-    expect(slow.calls).toHaveLength(1);
+    await started(slow);
+    expect(executes(slow.calls)).toEqual(["execute_gathering"]);
     slow.finish({ result: "completed" });
     await first;
     const second = tools.call("stand_up");
@@ -166,14 +275,16 @@ describe("맡기기는 한 번에 하나다", () => {
     const first = tools.call("execute_gathering", { displayName: "통나무" });
     const query = tools.call("get_activity");
     expect(slow.calls).toContain("get_activity");
+    await query;
     slow.finish({ result: "completed" });
-    await Promise.all([first, query]);
+    await first;
   });
 
   it("맡기기가 도는 동안 stop_action은 busy를 통과해 커넥터에 닿는다", async () => {
     const slow = new Slow();
     const tools = new Tools(slow, 10);
     const first = tools.call("execute_gathering", { displayName: "통나무" });
+    await started(slow);
     const stop = tools.call("stop_action");
     expect(slow.calls).toContain("stop_action");
     slow.finish({ result: "stopped" });
@@ -263,7 +374,7 @@ describe("거부 재호출 차단", () => {
     const { tools, connector } = await fakeTools(10);
     expect(await tools.call("execute_gathering", unknownItem)).toEqual(notFound);
     expect(await tools.call("execute_gathering", unknownItem)).toMatchObject({ error: "repeated_rejection" });
-    expect(connector.calls).toHaveLength(1);
+    expect(executes(connector.calls.map(([c]) => c))).toEqual(["execute_gathering"]);
   });
 
   it("조회로 새 정보를 얻은 뒤에는 같은 호출이 다시 커넥터에 닿는다", async () => {
@@ -271,14 +382,14 @@ describe("거부 재호출 차단", () => {
     await tools.call("execute_gathering", unknownItem);
     await tools.call("get_gatherable_items");
     expect(await tools.call("execute_gathering", unknownItem)).toEqual(notFound);
-    expect(connector.calls.map(([c]) => c)).toEqual(["execute_gathering", "get_gatherable_items", "execute_gathering"]);
+    expect(executes(connector.calls.map(([c]) => c))).toEqual(["execute_gathering", "get_gatherable_items", "execute_gathering"]);
   });
 
   it("본문이 다르면 다른 호출이라 막지 않는다", async () => {
     const { tools, connector } = await fakeTools(10);
     await tools.call("execute_gathering", unknownItem);
     await tools.call("execute_gathering", { displayName: "통나무" });
-    expect(connector.calls).toHaveLength(2);
+    expect(executes(connector.calls.map(([c]) => c))).toEqual(["execute_gathering", "execute_gathering"]);
   });
 
   it("다른 맡기기의 거부는 서로 막지 않는다", async () => {
@@ -315,7 +426,7 @@ describe("게임의 거부는 예외가 아니라 도구 결과다", () => {
     const tools = new Tools(connector, 10);
     await tools.call("execute_gathering", unknownItem);
     expect(await tools.call("execute_gathering", unknownItem)).toMatchObject({ error: "repeated_rejection" });
-    expect(connector.calls).toHaveLength(1);
+    expect(executes(connector.calls.map(([c]) => c))).toEqual(["execute_gathering"]);
   });
 
   it("필수 입력이 빠지면 커넥터를 부르지 않고 값으로 알린다", async () => {
