@@ -7,9 +7,15 @@ home="$(ssh mabiseo-win 'echo %USERPROFILE%' | tr -d '\r')"
 runner="$home\\mabiseo-runner"
 runner_scp="$(printf '%s' "$runner" | tr '\\\\' '/')"
 ssh mabiseo-win "if not exist \"$runner\" mkdir \"$runner\""
-# schtasks는 XML을 UTF-16으로만 읽는다
-{ printf '\xff\xfe'; sed -e "s|__USER__|$user|" -e "s|__HOME__|$(printf '%s' "$home" | sed 's/\\/\\\\/g')|" "$here/win-task.xml" | iconv -f UTF-8 -t UTF-16LE; } > "${TMPDIR:-/tmp}/mabiseo-task.xml"
 scp -q "$here/win-runner.ps1" "$here/win-wait.ps1" "mabiseo-win:$runner_scp/"
-scp -q "${TMPDIR:-/tmp}/mabiseo-task.xml" "mabiseo-win:$runner_scp/task.xml"
-ssh mabiseo-win "schtasks /create /tn mabiseo-run /xml \"$runner\\task.xml\" /f"
-ssh mabiseo-win "schtasks /query /tn mabiseo-run" | LC_ALL=C tr -d "\r"
+# schtasks는 XML을 UTF-16으로만 읽는다. 작업 둘: 짧은 명령(mabiseo-run, 2시간)과 오래 떠 있는 serve(mabiseo-serve, 12시간)
+register() {
+  local task="$1" desc="$2" limit="$3" args="$4"
+  { printf '\xff\xfe'; sed -e "s|__USER__|$user|" -e "s|__HOME__|$(printf '%s' "$home" | sed 's/\\/\\\\/g')|" \
+      -e "s|__DESC__|$desc|" -e "s|__LIMIT__|$limit|" -e "s|__ARGS__|$args|" "$here/win-task.xml" | iconv -f UTF-8 -t UTF-16LE; } > "${TMPDIR:-/tmp}/$task.xml"
+  scp -q "${TMPDIR:-/tmp}/$task.xml" "mabiseo-win:$runner_scp/$task.xml"
+  ssh mabiseo-win "schtasks /create /tn $task /xml \"$runner\\$task.xml\" /f"
+  ssh mabiseo-win "schtasks /query /tn $task" | LC_ALL=C tr -d "\r"
+}
+register mabiseo-run   "mabiseo: interactive-session runner woken by SSH" PT2H ""
+register mabiseo-serve "mabiseo: long-running serve in the interactive session" PT12H " -Slot serve"

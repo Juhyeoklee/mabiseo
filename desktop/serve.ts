@@ -9,7 +9,7 @@ import { Server } from "./server/server.js";
 import { Tools } from "./tools/tools.js";
 
 const recordings = fileURLToPath(new URL("../recordings/", import.meta.url));
-const usage = "사용법: npm run serve -- [--fail=login|offline | --real] [--wings=N] [--port=N] [--code=NNNNNN]";
+const usage = "사용법: npm run serve -- [--fail=login|offline | --real] [--wings=N] [--port=N] [--code=NNNNNN] [--trace=DIR]";
 const failFlags: Readonly<Record<string, FailMode>> = { "--fail=login": "login", "--fail=offline": "offline" };
 
 interface Args {
@@ -17,6 +17,7 @@ interface Args {
   wings: number;
   port: number;
   code: string;
+  trace: string | undefined;
 }
 
 function parseArgs(argv: string[]): Args | undefined {
@@ -25,6 +26,7 @@ function parseArgs(argv: string[]): Args | undefined {
   let wings = 10;
   let port = 7470;
   let code = randomInt(0, 1_000_000).toString().padStart(6, "0");
+  let trace: string | undefined;
   for (const arg of argv) {
     const mode = failFlags[arg];
     if (mode) fail = mode;
@@ -32,11 +34,12 @@ function parseArgs(argv: string[]): Args | undefined {
     else if (arg.startsWith("--wings=")) wings = Number(arg.slice("--wings=".length));
     else if (arg.startsWith("--port=")) port = Number(arg.slice("--port=".length));
     else if (arg.startsWith("--code=")) code = arg.slice("--code=".length);
+    else if (arg.startsWith("--trace=")) trace = arg.slice("--trace=".length) || undefined;
     else return undefined;
   }
   const whole = (n: number): boolean => Number.isInteger(n) && n >= 0;
   if (!whole(wings) || !whole(port) || !/^\d{6}$/.test(code) || (real && fail)) return undefined;
-  return { connector: real ? { kind: "real" } : { kind: "fake", fail }, wings, port, code };
+  return { connector: real ? { kind: "real" } : { kind: "fake", fail }, wings, port, code, trace };
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -47,10 +50,10 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   const pcName = hostname().replace(/\.local$/, "");
-  const tools = new Tools(await selectConnector(args.connector, recordings), args.wings);
+  const tools = new Tools(await selectConnector(args.connector, recordings, args.trace), args.wings);
   const server = await Server.start({ port: args.port, code: args.code, pcName, tools, ask });
   const stopAdvertising = advertise(pcName, server.port);
-  console.log(`[대기] ${pcName} · 포트 ${server.port} · 페어링 코드 ${args.code}`);
+  console.log(`[대기] ${pcName} · 포트 ${server.port} · 페어링 코드 ${args.code}${args.trace ? ` · 추적 ${args.trace}` : ""}`);
 
   const stop = async (): Promise<void> => {
     await stopAdvertising();

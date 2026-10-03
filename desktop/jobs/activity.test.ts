@@ -31,6 +31,12 @@ describe("활동 판정", () => {
     expect(isActive(playing)).toBe(true);
   });
 
+  it("실물 채집은 이동 중과 채집 중이 활동이고 끝난 직후는 아니다", async () => {
+    expect(isActive(await readJson(dir, "gathering/get_activity.json"))).toBe(true);
+    expect(isActive(await readJson(dir, "gathering/get_activity.at-spot.json"))).toBe(true);
+    expect(isActive(await readJson(dir, "gathering/get_activity.done.json"))).toBe(false);
+  });
+
   it("끊김 값과 거부 값은 활동이 아니다", () => {
     expect(isActive({ pipe: "disconnected", reason: "game_off" })).toBe(false);
     expect(isActive({ error: "not_in_game", message: "" })).toBe(false);

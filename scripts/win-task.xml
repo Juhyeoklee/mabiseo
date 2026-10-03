@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>mabiseo: interactive-session runner woken by SSH</Description>
+    <Description>__DESC__</Description>
   </RegistrationInfo>
   <Principals>
     <Principal id="Author">
@@ -22,13 +22,13 @@
     <Hidden>false</Hidden>
     <RunOnlyIfIdle>false</RunOnlyIfIdle>
     <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT2H</ExecutionTimeLimit>
+    <ExecutionTimeLimit>__LIMIT__</ExecutionTimeLimit>
     <Priority>7</Priority>
   </Settings>
   <Actions Context="Author">
     <Exec>
       <Command>powershell.exe</Command>
-      <Arguments>-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "__HOME__\mabiseo-runner\win-runner.ps1"</Arguments>
+      <Arguments>-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "__HOME__\mabiseo-runner\win-runner.ps1"__ARGS__</Arguments>
     </Exec>
   </Actions>
 </Task>

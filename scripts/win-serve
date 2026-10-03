@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# 오래 떠 있는 serve를 Windows 로그인 세션에서 띄우고 · 끄고 · 본다. 작업 스케줄러 작업 mabiseo-serve가 돈다(scripts/win-setup).
+# 사용: scripts/win-serve start [serve 인자...] | stop | log [줄 수] | status
+set -eu
+[ $# -gt 0 ] || { echo "사용: scripts/win-serve start [--real --code=NNNNNN --trace=DIR ...] | stop | log [줄 수] | status" >&2; exit 2; }
+repo="${MABISEO_WIN_REPO:-C:\\mabiseo}"
+home="$(ssh mabiseo-win 'echo %USERPROFILE%' | tr -d '\r')"
+runner="$home\\mabiseo-runner"
+runner_scp="$(printf '%s' "$runner" | tr '\\\\' '/')"
+action="$1"; shift
+case "$action" in
+start)
+  tmp="$(mktemp -d)"
+  printf '%s\n' "npm run -s serve -- $*" > "$tmp/serve.cmd.txt"
+  printf '%s\n' "$repo\\desktop" > "$tmp/serve.cwd.txt"
+  scp -q "$tmp/serve.cmd.txt" "$tmp/serve.cwd.txt" "mabiseo-win:$runner_scp/"
+  rm -rf "$tmp"
+  ssh mabiseo-win "del /q \"$runner\\serve.done.txt\" \"$runner\\serve.out.txt\" 2>nul & schtasks /run /tn mabiseo-serve >nul"
+  sleep 6
+  exec "$0" log 5
+  ;;
+stop)
+  # schtasks /end는 실행기만 끝내고 npm · node 트리는 남긴다. 남은 node가 포트를 쥐고 있어 다음 start가 EADDRINUSE로 죽는다
+  ssh mabiseo-win "if exist \"$runner\\serve.pid.txt\" (for /f \"usebackq\" %p in (\"$runner\\serve.pid.txt\") do taskkill /t /f /pid %p >nul 2>nul) & del /q \"$runner\\serve.pid.txt\" 2>nul & schtasks /end /tn mabiseo-serve >nul 2>nul" || true ;;
+log)
+  scp -q "mabiseo-win:$runner_scp/serve.out.txt" "${TMPDIR:-/tmp}/mabiseo-serve.out.txt" 2>/dev/null || { echo "(serve 출력 없음)"; exit 0; }
+  tr -d '\r' < "${TMPDIR:-/tmp}/mabiseo-serve.out.txt" | tail -n "${1:-40}" ;;
+status)
+  ssh mabiseo-win "schtasks /query /tn mabiseo-serve /fo list" | tr -d '\r' | grep -i -E "status|상태" || true
+  ssh mabiseo-win "if exist \"$runner\\serve.done.txt\" type \"$runner\\serve.done.txt\"" | tr -d '\r' | sed 's/^/종료 코드 /' ;;
+*) echo "모르는 동작: $action" >&2; exit 2 ;;
+esac

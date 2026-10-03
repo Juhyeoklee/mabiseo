@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "DisplayName": "통나무",
+      "ToolOk": true
+    },
+    {
+      "DisplayName": "단단한 통나무",
+      "ToolOk": true
+    },
+    {
+      "DisplayName": "부드러운 통나무",
+      "ToolOk": true
+    },
+    {
+      "DisplayName": "상급 통나무",
+      "ToolOk": true
+    },
+    {
+      "DisplayName": "상급 통나무+",
+      "ToolOk": true
+    },
+    {
+      "DisplayName": "최상급 통나무",
+      "ToolOk": true
+    },
+    {
+      "DisplayName": "최상급 통나무+",
+      "ToolOk": true
+    },
+    {
+      "DisplayName": "특급 통나무",
+      "ToolOk": true
+    }
+  ]
+}

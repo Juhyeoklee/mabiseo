@@ -79,7 +79,7 @@ describe("승인 게이트", () => {
   it("승인이 나면 커넥터에 닿는다", async () => {
     const { connector, call } = await setup(true);
     await call("execute_gathering", { displayName: "마비서없는아이템" });
-    expect(connector.calls).toEqual([["execute_gathering", '{"displayName":"마비서없는아이템"}']]);
+    expect(connector.calls.filter(([c]) => c !== "get_currencies")).toEqual([["execute_gathering", '{"displayName":"마비서없는아이템"}']]);
   });
 
   it("승인이 나도 tools/의 날개 예산이 0이면 커넥터에 닿지 않는다", async () => {
