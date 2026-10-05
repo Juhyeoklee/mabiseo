@@ -1,6 +1,7 @@
 {
   "type": "event",
   "id": "a1",
+  "seq": 0,
   "event": {
     "kind": "tool_result",
     "text": "{\"wings\":10}"

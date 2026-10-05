@@ -18,12 +18,13 @@ export interface ServerOptions {
 
 interface Run {
   id: string;
-  socket: WebSocket;
   abort: AbortController;
+  events: AgentEvent[];
 }
 
 interface Approval {
   run: Run;
+  request: DesktopMessage;
   resolve: (allow: boolean) => void;
 }
 
@@ -39,9 +40,10 @@ export class Server {
     return new Server(wss, options, await status(options.tools));
   }
 
-  private readonly paired = new WeakSet<WebSocket>();
+  private readonly paired = new Set<WebSocket>();
   private readonly approvals = new Map<string, Approval>();
   private run: Run | undefined;
+  private last: Run | undefined;
 
   private constructor(
     private readonly wss: WebSocketServer,
@@ -60,6 +62,7 @@ export class Server {
   }
 
   async close(): Promise<void> {
+    if (this.run) this.cancel(this.run);
     for (const client of this.wss.clients) client.terminate();
     await new Promise<void>((resolve, reject) => this.wss.close((error) => (error ? reject(error) : resolve())));
   }
@@ -85,21 +88,29 @@ export class Server {
 
   private async pair(socket: WebSocket, code: string): Promise<void> {
     if (code !== this.options.code) return send(socket, { type: "pair_failed", reason: "wrong_code" });
+    const status = this.run ? this.lastStatus : await this.refreshStatus();
+    if (socket.readyState !== WebSocket.OPEN) return;
+    // 여기서 다시 보내기까지 await를 넣지 않는다. 사이에 실시간 event가 끼면 폰이 높은 seq를 먼저 받아 다시 보낸 낮은 seq를 버린다
     this.paired.add(socket);
     send(socket, { type: "paired", pcName: this.options.pcName });
-    send(socket, this.run ? this.lastStatus : await this.refreshStatus());
+    send(socket, status);
+    const last = this.last;
+    last?.events.forEach((event, seq) => send(socket, eventMessage(last.id, seq, event)));
+    for (const approval of this.approvals.values()) if (approval.run === this.run) send(socket, approval.request);
   }
 
   private async ask(socket: WebSocket, id: string, text: string): Promise<void> {
-    if (this.run) return send(socket, { type: "event", id, event: { kind: "failed", reason: "busy" } });
-    const run: Run = { id, socket, abort: new AbortController() };
-    this.run = run;
+    if (this.run) return send(socket, eventMessage(id, 0, { kind: "failed", reason: "busy" }));
+    const run: Run = { id, abort: new AbortController(), events: [] };
+    this.run = this.last = run;
     let ended = false;
     const emit = (event: AgentEvent): void => {
       if (ended) return;
       const cancelled = event.kind === "failed" && run.abort.signal.aborted;
       ended = event.kind === "done" || event.kind === "failed";
-      send(socket, { type: "event", id, event: cancelled ? { kind: "failed", reason: "cancelled" } : agentEvent.parse(event) });
+      const recorded: AgentEvent = cancelled ? { kind: "failed", reason: "cancelled" } : event;
+      run.events.push(recorded);
+      this.broadcast(eventMessage(id, run.events.length - 1, recorded));
     };
     try {
       await this.options.ask(text, {
@@ -116,22 +127,28 @@ export class Server {
     }
     const status = await this.refreshStatus();
     this.run = undefined;
-    if (this.paired.has(socket)) send(socket, status);
+    this.broadcast(status);
   }
 
   private approve(run: Run, name: ToolName, input: ToolInput): Promise<boolean> {
-    if (run.abort.signal.aborted || run.socket.readyState !== WebSocket.OPEN) return Promise.resolve(false);
+    if (run.abort.signal.aborted) return Promise.resolve(false);
     const id = randomUUID();
+    const request: DesktopMessage = { type: "approval_request", id, askId: run.id, tool: name, input: definedFields(input), wings: spec(name).wings };
     return new Promise((resolve) => {
       this.approvals.set(id, {
         run,
+        request,
         resolve: (allow) => {
           this.approvals.delete(id);
           resolve(allow);
         },
       });
-      send(run.socket, { type: "approval_request", id, askId: run.id, tool: name, input: definedFields(input), wings: spec(name).wings });
+      this.broadcast(request);
     });
+  }
+
+  private broadcast(message: DesktopMessage): void {
+    for (const socket of this.paired) send(socket, message);
   }
 
   private cancel(run: Run): void {
@@ -149,7 +166,6 @@ export class Server {
 
   private forget(socket: WebSocket): void {
     this.paired.delete(socket);
-    if (this.run?.socket === socket) this.cancel(this.run);
   }
 
   private async refreshStatus(): Promise<DesktopMessage> {
@@ -181,6 +197,10 @@ function decode(raw: string): PhoneMessage | undefined {
   } catch {
     return undefined;
   }
+}
+
+function eventMessage(id: string, seq: number, event: AgentEvent): DesktopMessage {
+  return { type: "event", id, seq, event: agentEvent.parse(event) };
 }
 
 function send(socket: WebSocket, message: DesktopMessage): void {

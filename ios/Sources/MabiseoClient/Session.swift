@@ -46,12 +46,15 @@ public final class Session {
   public private(set) var entries: [Entry] = []
   public private(set) var approval: PendingApproval?
   public private(set) var askId: String?
+  public private(set) var pcName: String?
 
   private let makeTransport: @Sendable () -> any Transport
   private let makeId: @Sendable () -> String
   private var transport: (any Transport)?
   private var receiving: Task<Void, Never>?
   private var nextEntryId = 0
+  private var code: String?
+  private var nextSeq = 0
 
   public init(makeTransport: @escaping @Sendable () -> any Transport, makeId: @escaping @Sendable () -> String = { UUID().uuidString }) {
     self.makeTransport = makeTransport
@@ -61,6 +64,7 @@ public final class Session {
   public var busy: Bool { askId != nil }
 
   public func pair(code: String) async {
+    self.code = code
     if transport == nil {
       let transport = makeTransport()
       phase = .pairing
@@ -81,6 +85,7 @@ public final class Session {
     guard case .paired = phase, askId == nil else { return }
     let id = makeId()
     askId = id
+    nextSeq = 0
     append(.request(text))
     await send(.ask(id: id, text: text))
   }
@@ -99,6 +104,19 @@ public final class Session {
   public func disconnect() {
     transport?.close()
     drop(phase: .disconnected)
+    askId = nil
+    pcName = nil
+    code = nil
+  }
+
+  public func reconnect() async {
+    guard let code, phase != .pairing else { return }
+    receiving?.cancel()
+    receiving = nil
+    transport?.close()
+    transport = nil
+    approval = nil
+    await pair(code: code)
   }
 
   private func send(_ message: PhoneMessage) async {
@@ -131,6 +149,7 @@ public final class Session {
     switch message {
     case .paired(let pcName):
       phase = .paired(pcName: pcName)
+      self.pcName = pcName
     case .pairFailed(.wrongCode):
       phase = .wrongCode
     case .status(let connector, let wings):
@@ -138,8 +157,9 @@ public final class Session {
     case .approvalRequest(let id, let askId, let tool, let input, let wings):
       guard askId == self.askId else { return }
       approval = PendingApproval(id: id, tool: tool, input: input, wings: wings)
-    case .event(let id, let event):
-      guard id == askId else { return }
+    case .event(let id, let seq, let event):
+      guard id == askId, seq >= nextSeq else { return }
+      nextSeq = seq + 1
       if case .progress = event, let last = entries.last, case .agent(.progress) = last.body {
         entries[entries.count - 1] = Entry(id: last.id, body: .agent(event))
       } else {
@@ -164,7 +184,6 @@ public final class Session {
     receiving?.cancel()
     receiving = nil
     transport = nil
-    askId = nil
     approval = nil
     self.phase = phase
   }

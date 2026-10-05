@@ -80,6 +80,12 @@ function waitForAbort(session: Session): Promise<void> {
   return new Promise((resolve) => signal.addEventListener("abort", () => resolve()));
 }
 
+function gate(): { wait: Promise<void>; open: () => void } {
+  let open = (): void => undefined;
+  const wait = new Promise<void>((resolve) => (open = resolve));
+  return { wait, open };
+}
+
 const hangingAsk: Ask = async (_prompt, session) => {
   session.onEvent({ kind: "started", model: "fake" });
   await waitForAbort(session);
@@ -191,6 +197,26 @@ describe("대화", () => {
     await server.close();
   });
 
+  test("event의 seq는 ask마다 0부터 1씩 는다", async () => {
+    const { server } = await serve(echoAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    for (const id of ["a1", "a2"]) {
+      phone.send({ type: "ask", id, text: "날개 얼마나 남았어" });
+      const seqs: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        const message = await phone.next();
+        if (message.type !== "event") throw new Error(message.type);
+        expect(message.id).toBe(id);
+        seqs.push(message.seq);
+      }
+      expect(seqs).toEqual([0, 1, 2]);
+      expect((await phone.next()).type).toBe("status");
+    }
+    phone.close();
+    await server.close();
+  });
+
   test("한 번에 하나만 돈다. 겹친 ask는 busy로 실패한다", async () => {
     const { server } = await serve(hangingAsk);
     const phone = await Phone.connect(server.port);
@@ -198,9 +224,9 @@ describe("대화", () => {
     phone.send({ type: "ask", id: "a1", text: "첫째" });
     expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "started" } });
     phone.send({ type: "ask", id: "a2", text: "둘째" });
-    expect(await phone.next()).toEqual({ type: "event", id: "a2", event: { kind: "failed", reason: "busy" } });
+    expect(await phone.next()).toEqual({ type: "event", id: "a2", seq: 0, event: { kind: "failed", reason: "busy" } });
     phone.send({ type: "cancel", id: "a1" });
-    expect(await phone.next()).toEqual({ type: "event", id: "a1", event: { kind: "failed", reason: "cancelled" } });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
     phone.close();
     await server.close();
   });
@@ -214,7 +240,7 @@ describe("대화", () => {
     phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
     await phone.next();
     phone.send({ type: "cancel", id: "a1" });
-    expect(await phone.next()).toEqual({ type: "event", id: "a1", event: { kind: "failed", reason: "cancelled" } });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
     expect((await phone.next()).type).toBe("status");
     phone.send({ type: "ask", id: "a2", text: "다음" });
     expect(await phone.next()).toMatchObject({ type: "event", id: "a2", event: { kind: "started" } });
@@ -247,7 +273,7 @@ describe("대화", () => {
     await phone.next();
     phone.send({ type: "cancel", id: "other" });
     phone.send({ type: "cancel", id: "a1" });
-    expect(await phone.next()).toEqual({ type: "event", id: "a1", event: { kind: "failed", reason: "cancelled" } });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
     phone.close();
     await server.close();
   });
@@ -313,12 +339,40 @@ describe("승인", () => {
     await server.close();
   });
 
-  test("승인을 기다리는 중에 폰이 끊기면 거부로 돌아가고 실행이 취소된다", async () => {
-    let answer: Promise<boolean> | undefined;
+  test("승인을 기다리는 중에 폰이 끊겨도 승인 대기는 남고, 다시 페어링한 폰에 같은 approval_request가 다시 가며 그 답으로 진행한다", async () => {
+    const { server } = await serve(gatheringAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "새록 버섯 100개 채집해" });
+    await phone.next();
+    const first = await phone.next();
+    if (first.type !== "approval_request") throw new Error(first.type);
+    phone.close();
+    await phone.closed;
+    const again = await Phone.connect(server.port);
+    await again.pair();
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "started", model: "fake" } });
+    const repeated = await again.next();
+    expect(repeated).toEqual(first);
+    if (repeated.type !== "approval_request") throw new Error(repeated.type);
+    again.send({ type: "approve", id: repeated.id, allow: true });
+    expect(await again.next()).toEqual({
+      type: "event",
+      id: "a1",
+      seq: 1,
+      event: { kind: "done", text: "채집을 시작했다.", turns: 1, costUsd: 0 },
+    });
+    again.close();
+    await server.close();
+  });
+
+  test("답한 승인은 다시 페어링해도 다시 오지 않는다", async () => {
+    const release = gate();
     const ask: Ask = async (_prompt, session) => {
-      answer = session.approve("execute_gathering", { displayName: "새록 버섯", count: 100 });
-      await answer;
-      await waitForAbort(session);
+      session.onEvent({ kind: "started", model: "fake" });
+      const allowed = await session.approve("execute_gathering", { displayName: "새록 버섯", count: 100 });
+      session.onEvent({ kind: "text", text: allowed ? "승인됨" : "거부됨" });
+      await release.wait;
       session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
     };
     const { server } = await serve(ask);
@@ -326,13 +380,18 @@ describe("승인", () => {
     await phone.pair();
     phone.send({ type: "ask", id: "a1", text: "새록 버섯 100개 채집해" });
     await phone.next();
+    const request = await phone.next();
+    if (request.type !== "approval_request") throw new Error(request.type);
+    phone.send({ type: "approve", id: request.id, allow: true });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "text", text: "승인됨" } });
     phone.close();
     await phone.closed;
-    expect(await answer).toBe(false);
     const again = await Phone.connect(server.port);
     await again.pair();
-    again.send({ type: "ask", id: "a2", text: "다음" });
-    expect(await again.next()).toMatchObject({ type: "approval_request", askId: "a2" });
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "started", model: "fake" } });
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "text", text: "승인됨" } });
+    release.open();
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 2, event: { kind: "done", text: "", turns: 1, costUsd: 0 } });
     again.close();
     await server.close();
   });
@@ -407,7 +466,7 @@ describe("중단", () => {
     phone.send({ type: "ask", id: "a1", text: "통나무 채집해" });
     expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "started" } });
     phone.send({ type: "cancel", id: "a1" });
-    expect(await phone.next()).toEqual({ type: "event", id: "a1", event: { kind: "failed", reason: "cancelled" } });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
     expect((await phone.next()).type).toBe("status");
     expect(connector.calls).toContain("stop_action");
     expect(await gathered).toEqual({ result: "stopped", gained: 3, target: 100 });
@@ -433,6 +492,63 @@ describe("중단", () => {
     await server.close();
   });
 
+  test("폰이 끊겨도 에이전트는 끊지 않는다", async () => {
+    const { server, connector } = await serveGathering();
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "통나무 채집해" });
+    await phone.next();
+    phone.close();
+    await phone.closed;
+    connector.finish();
+    await gathered;
+    const again = await Phone.connect(server.port);
+    await again.pair();
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "started", model: "fake" } });
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "done", text: "", turns: 1, costUsd: 0 } });
+    expect(connector.calls).not.toContain("stop_action");
+    again.close();
+    await server.close();
+  });
+
+  test("다시 페어링한 폰의 cancel도 진행 중인 ask를 끊고 stop_action을 보낸다", async () => {
+    const { server, connector } = await serveGathering();
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "통나무 채집해" });
+    await phone.next();
+    phone.close();
+    await phone.closed;
+    const again = await Phone.connect(server.port);
+    await again.pair();
+    expect(await again.next()).toMatchObject({ type: "event", id: "a1", seq: 0, event: { kind: "started" } });
+    again.send({ type: "cancel", id: "a1" });
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
+    expect((await again.next()).type).toBe("status");
+    expect(connector.calls).toContain("stop_action");
+    again.close();
+    await server.close();
+  });
+
+  test("서버를 닫으면 진행 중인 에이전트를 끊고 활동은 잇는다", async () => {
+    let aborted: Promise<void> | undefined;
+    const ask: Ask = async (prompt, session) => {
+      aborted = waitForAbort(session);
+      await gatheringUntilStopped(prompt, session);
+    };
+    const connector = await Gathering.load();
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask });
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "통나무 채집해" });
+    await phone.next();
+    await server.close();
+    await aborted;
+    expect(connector.calls).not.toContain("stop_action");
+    connector.finish();
+    await gathered;
+  });
+
   test("활동이 없으면 cancel은 stop_action을 보내지 않는다", async () => {
     const connector = new Counting(await FakeConnector.fromDirectory(recordings));
     const tools = new Tools(connector, 10);
@@ -442,7 +558,7 @@ describe("중단", () => {
     phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
     await phone.next();
     phone.send({ type: "cancel", id: "a1" });
-    expect(await phone.next()).toEqual({ type: "event", id: "a1", event: { kind: "failed", reason: "cancelled" } });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
     expect(connector.calls.map(([command]) => command)).not.toContain("stop_action");
     phone.close();
     await server.close();
@@ -460,9 +576,114 @@ describe("중단", () => {
     expect(await phone.next()).toEqual({
       type: "event",
       id: "a1",
+      seq: 0,
       event: { kind: "progress", activity: "execute_gathering", elapsedSeconds: 20 },
     });
     phone.close();
+    await server.close();
+  });
+});
+
+describe("다시 페어링", () => {
+  test("진행 중에 다시 페어링한 폰에는 paired · status 뒤로 그 ask의 event가 seq 0부터 다시 오고, 이어서 새 event가 온다", async () => {
+    const release = gate();
+    const ask: Ask = async (_prompt, session) => {
+      session.onEvent({ kind: "started", model: "fake" });
+      session.onEvent({ kind: "text", text: "채집 중" });
+      await release.wait;
+      session.onEvent({ kind: "done", text: "끝", turns: 1, costUsd: 0 });
+    };
+    const { server } = await serve(ask);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "채집해" });
+    await phone.next();
+    await phone.next();
+    phone.close();
+    await phone.closed;
+    const again = await Phone.connect(server.port);
+    again.send({ type: "pair", code });
+    expect(await again.next()).toEqual({ type: "paired", pcName });
+    expect((await again.next()).type).toBe("status");
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "started", model: "fake" } });
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "text", text: "채집 중" } });
+    release.open();
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 2, event: { kind: "done", text: "끝", turns: 1, costUsd: 0 } });
+    expect((await again.next()).type).toBe("status");
+    again.close();
+    await server.close();
+  });
+
+  test("끝난 ask는 다음 ask가 올 때까지 다시 페어링한 폰에 다시 온다", async () => {
+    const release = gate();
+    const ask: Ask = async (_prompt, session) => {
+      session.onEvent({ kind: "started", model: "fake" });
+      await release.wait;
+      session.onEvent({ kind: "done", text: "끝", turns: 1, costUsd: 0 });
+    };
+    const { server } = await serve(ask);
+    const observer = await Phone.connect(server.port);
+    await observer.pair();
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "채집해" });
+    await phone.next();
+    phone.close();
+    await phone.closed;
+    release.open();
+    expect(await observer.next()).toMatchObject({ type: "event", id: "a1", seq: 0 });
+    expect(await observer.next()).toMatchObject({ type: "event", id: "a1", seq: 1, event: { kind: "done" } });
+    expect((await observer.next()).type).toBe("status");
+    const again = await Phone.connect(server.port);
+    again.send({ type: "pair", code });
+    expect(await again.next()).toEqual({ type: "paired", pcName });
+    expect(await again.next()).toEqual({ type: "status", connector: "connected", wings: 10 });
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "started", model: "fake" } });
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "done", text: "끝", turns: 1, costUsd: 0 } });
+    observer.close();
+    again.close();
+    await server.close();
+  });
+
+  test("새 ask가 시작되면 앞 ask의 기록은 다시 보내지 않는다", async () => {
+    const { server } = await serve(echoAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    for (const id of ["a1", "a2"]) {
+      phone.send({ type: "ask", id, text: id });
+      for (let i = 0; i < 3; i++) await phone.next();
+      expect((await phone.next()).type).toBe("status");
+    }
+    phone.close();
+    await phone.closed;
+    const again = await Phone.connect(server.port);
+    await again.pair();
+    expect(await again.next()).toEqual({ type: "event", id: "a2", seq: 0, event: { kind: "started", model: "fake" } });
+    expect(await again.next()).toEqual({ type: "event", id: "a2", seq: 1, event: { kind: "text", text: "a2" } });
+    expect(await again.next()).toEqual({ type: "event", id: "a2", seq: 2, event: { kind: "done", text: "a2", turns: 1, costUsd: 0 } });
+    again.close();
+    await server.close();
+  });
+
+  test("겹친 ask의 busy는 그 폰에만 seq 0으로 가고 기록에 남지 않는다", async () => {
+    const { server } = await serve(hangingAsk);
+    const first = await Phone.connect(server.port);
+    await first.pair();
+    const second = await Phone.connect(server.port);
+    await second.pair();
+    first.send({ type: "ask", id: "a1", text: "첫째" });
+    expect(await first.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "started", model: "fake" } });
+    expect(await second.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "started", model: "fake" } });
+    second.send({ type: "ask", id: "a2", text: "둘째" });
+    expect(await second.next()).toEqual({ type: "event", id: "a2", seq: 0, event: { kind: "failed", reason: "busy" } });
+    const third = await Phone.connect(server.port);
+    await third.pair();
+    expect(await third.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "started", model: "fake" } });
+    first.send({ type: "cancel", id: "a1" });
+    const cancelled = { type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } };
+    expect(await first.next()).toEqual(cancelled);
+    expect(await third.next()).toEqual(cancelled);
+    for (const phone of [first, second, third]) phone.close();
     await server.close();
   });
 });

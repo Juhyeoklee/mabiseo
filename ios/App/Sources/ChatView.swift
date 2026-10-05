@@ -7,7 +7,13 @@ struct ChatView: View {
   let pcName: String
   let leave: () -> Void
   @State private var draft = ""
+  @State private var wasInBackground = false
   @FocusState private var typing: Bool
+  @Environment(\.scenePhase) private var scenePhase
+
+  private var linked: Bool {
+    if case .paired = session.phase { true } else { false }
+  }
 
   var body: some View {
     NavigationStack {
@@ -28,6 +34,7 @@ struct ChatView: View {
         }
         if let approval = session.approval {
           ApprovalView(approval: approval) { allow in Task { await session.approve(allow) } }
+            .disabled(!linked)
         }
         composer
       }
@@ -39,9 +46,57 @@ struct ChatView: View {
         }
       }
       .safeAreaInset(edge: .top, spacing: 0) {
-        if let status = session.status { StatusView(status: status) }
+        VStack(spacing: 0) {
+          connectionBand
+          if let status = session.status { StatusView(status: status) }
+        }
       }
     }
+    .onChange(of: scenePhase) { _, phase in
+      switch phase {
+      case .background:
+        wasInBackground = true
+      case .active where wasInBackground:
+        wasInBackground = false
+        Task { await session.reconnect() }
+      default:
+        break
+      }
+    }
+    .onChange(of: session.phase) { old, new in
+      // 붙어 있다가 끊긴 순간만 다시 붙는다. 다시 연결 실패(pairing → lost)에도 부르면 PC가 꺼져 있을 때 재시도가 끝없이 돈다
+      if case .paired = old, case .lost = new, scenePhase == .active {
+        Task { await session.reconnect() }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var connectionBand: some View {
+    switch session.phase {
+    case .paired:
+      EmptyView()
+    case .pairing:
+      band { Text("다시 연결하는 중") }
+    case .lost, .disconnected:
+      band {
+        Text("PC와 연결이 끊어졌어요.")
+        Button("다시 연결") { Task { await session.reconnect() } }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+      }
+    case .wrongCode:
+      band { Text("PC의 페어링 코드가 바뀌었어요. 연결 끊기 후 다시 연결해 주세요.") }
+    }
+  }
+
+  private func band(@ViewBuilder _ content: () -> some View) -> some View {
+    HStack(spacing: 8) { content() }
+      .font(.footnote)
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 8)
+      .padding(.horizontal)
+      .background(.orange.opacity(0.15))
   }
 
   private var composer: some View {
@@ -50,10 +105,11 @@ struct ChatView: View {
         .lineLimit(1...4)
         .textFieldStyle(.roundedBorder)
         .focused($typing)
-        .disabled(session.busy)
+        .disabled(session.busy || !linked)
       if session.busy {
         Button("중단", role: .destructive) { Task { await session.cancel() } }
           .buttonStyle(.bordered)
+          .disabled(!linked)
       } else {
         Button("보내기") {
           let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -62,7 +118,7 @@ struct ChatView: View {
           Task { await session.ask(text) }
         }
         .buttonStyle(.borderedProminent)
-        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .disabled(!linked || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       }
     }
     .padding()

@@ -1,0 +1,8 @@
+{
+  "error": "blocked",
+  "kind": "unknown_modal",
+  "message": "A blocking UI is covering the screen, so the action cannot continue. Tell the user, and retry after it is cleared.",
+  "gained": 56,
+  "target": 100,
+  "cost": "정령의 날개 5 spent, 18805 left."
+}

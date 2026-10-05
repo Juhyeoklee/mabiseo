@@ -167,6 +167,13 @@ describe("날개 예산", () => {
     expect(tools.wings).toBe(5);
   });
 
+  it("다른 창이 덮어 중간에 막힌 실물 채집 응답은 cost대로 5개를 깎는다", async () => {
+    const blocked = await readJson(dir, "modal/execute_gathering.json");
+    const tools = new Tools(refusing(() => blocked, [100]), 10);
+    expect(await tools.call("execute_gathering", { displayName: "통나무" })).toMatchObject({ error: "blocked", kind: "unknown_modal", gained: 56 });
+    expect(tools.wings).toBe(5);
+  });
+
   it("부활 대기의 blocked처럼 시작 전에 거부돼 실제 날개가 그대로면 예산이 줄지 않는다", async () => {
     const currencies = await readJson(dir, "get_currencies.json");
     const blocked = await readJson(dir, "reviving/execute_gathering.json");

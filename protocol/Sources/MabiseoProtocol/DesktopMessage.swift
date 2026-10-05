@@ -92,10 +92,10 @@ public enum DesktopMessage: Codable, Equatable, Sendable {
   case pairFailed(reason: PairFailure)
   case status(connector: ConnectorState, wings: Int)
   case approvalRequest(id: String, askId: String, tool: String, input: ToolInput, wings: Int)
-  case event(id: String, AgentEvent)
+  case event(id: String, seq: Int, AgentEvent)
 
   private enum Key: String, CodingKey {
-    case type, pcName, reason, connector, wings, id, askId, tool, input, event
+    case type, pcName, reason, connector, wings, id, askId, tool, input, seq, event
   }
 
   public init(from decoder: Decoder) throws {
@@ -121,8 +121,11 @@ public enum DesktopMessage: Codable, Equatable, Sendable {
         input: try container.decode(ToolInput.self, forKey: .input),
         wings: try container.decode(Int.self, forKey: .wings))
     case "event":
-      try rejectUnknownKeys(in: decoder, allowed: [Key.type, .id, .event])
-      self = .event(id: try container.decode(String.self, forKey: .id), try container.decode(AgentEvent.self, forKey: .event))
+      try rejectUnknownKeys(in: decoder, allowed: [Key.type, .id, .seq, .event])
+      self = .event(
+        id: try container.decode(String.self, forKey: .id),
+        seq: try container.decode(Int.self, forKey: .seq),
+        try container.decode(AgentEvent.self, forKey: .event))
     case let type:
       throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "모르는 데스크탑 메시지: \(type)")
     }
@@ -148,9 +151,10 @@ public enum DesktopMessage: Codable, Equatable, Sendable {
       try container.encode(tool, forKey: .tool)
       try container.encode(input, forKey: .input)
       try container.encode(wings, forKey: .wings)
-    case .event(let id, let event):
+    case .event(let id, let seq, let event):
       try container.encode("event", forKey: .type)
       try container.encode(id, forKey: .id)
+      try container.encode(seq, forKey: .seq)
       try container.encode(event, forKey: .event)
     }
   }

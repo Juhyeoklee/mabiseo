@@ -36,6 +36,6 @@ export const desktopMessage = z.discriminatedUnion("type", [
     input: toolInput,
     wings: z.int().nonnegative(),
   }),
-  z.strictObject({ type: z.literal("event"), id: z.string(), event: agentEvent }),
+  z.strictObject({ type: z.literal("event"), id: z.string(), seq: z.int().nonnegative(), event: agentEvent }),
 ]);
 export type DesktopMessage = z.infer<typeof desktopMessage>;
