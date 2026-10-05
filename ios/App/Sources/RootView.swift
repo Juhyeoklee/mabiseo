@@ -5,7 +5,7 @@ struct RootView: View {
   @State private var session: Session?
 
   var body: some View {
-    if let session, case .paired(let pcName) = session.phase {
+    if let session, let pcName = session.pcName {
       ChatView(session: session, pcName: pcName) {
         session.disconnect()
         self.session = nil

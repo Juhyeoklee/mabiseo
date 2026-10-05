@@ -14,6 +14,12 @@ private func fixture(_ name: String) throws -> String {
   try String(contentsOf: fixtures.appendingPathComponent("\(name).json"), encoding: .utf8)
 }
 
+private func event(_ name: String, seq: Int) throws -> String {
+  let message = try #require(try JSONSerialization.jsonObject(with: Data(fixture(name).utf8)) as? NSDictionary).mutableCopy() as! NSMutableDictionary
+  message["seq"] = seq
+  return String(decoding: try JSONSerialization.data(withJSONObject: message), as: UTF8.self)
+}
+
 private func json(_ text: String) throws -> NSDictionary {
   try #require(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? NSDictionary)
 }
@@ -27,9 +33,10 @@ private func settle(_ condition: @MainActor () -> Bool) async {
 }
 
 @MainActor
-private func pairedSession(transport: FakeTransport = FakeTransport(), ids: [String] = ["a1"]) async throws -> Session {
+private func pairedSession(transport: FakeTransport = FakeTransport(), then later: [any Transport] = [], ids: [String] = ["a1"]) async throws -> Session {
   let queue = Ids(ids)
-  let session = Session(makeTransport: { transport }, makeId: { queue.next() })
+  let transports = Transports([transport] + later)
+  let session = Session(makeTransport: { transports.next() }, makeId: { queue.next() })
   await session.pair(code: "123456")
   transport.push(try fixture("paired"))
   transport.push(try fixture("status"))
@@ -41,6 +48,29 @@ private final class Ids: @unchecked Sendable {
   private var ids: [String]
   init(_ ids: [String]) { self.ids = ids }
   func next() -> String { ids.removeFirst() }
+}
+
+private final class Transports: @unchecked Sendable {
+  private var queue: [any Transport]
+  init(_ queue: [any Transport]) { self.queue = queue }
+  func next() -> any Transport { queue.count > 1 ? queue.removeFirst() : queue[0] }
+}
+
+private final class Watched: Transport, @unchecked Sendable {
+  private let inner: FakeTransport
+  private(set) var closed = false
+  init(_ inner: FakeTransport) { self.inner = inner }
+  func connect() async throws { try await inner.connect() }
+  func send(_ text: String) async throws { try await inner.send(text) }
+  func messages() -> AsyncThrowingStream<String, any Error> { inner.messages() }
+  func close() {
+    closed = true
+    inner.close()
+  }
+}
+
+private func text(_ id: String, seq: Int, _ text: String) -> String {
+  #"{"type":"event","id":"\#(id)","seq":\#(seq),"event":{"kind":"text","text":"\#(text)"}}"#
 }
 
 @MainActor
@@ -93,8 +123,8 @@ func askStreamsEvents() async throws {
   await session.ask("날개 얼마나 남았어")
   #expect(session.busy)
   #expect(try json(await transport.sent[1]) == ["type": "ask", "id": "a1", "text": "날개 얼마나 남았어"])
-  for name in ["event.started", "event.tool", "event.tool_result", "event.text", "event.done"] {
-    transport.push(try fixture(name))
+  for (seq, name) in ["event.started", "event.tool", "event.tool_result", "event.text", "event.done"].enumerated() {
+    transport.push(try event(name, seq: seq))
   }
   await settle { !session.busy }
   #expect(session.entries.map(\.body) == [
@@ -114,8 +144,8 @@ func progressReplacesLastProgress() async throws {
   let session = try await pairedSession(transport: transport)
   await session.ask("통나무 채집해")
   transport.push(try fixture("event.tool"))
-  transport.push(#"{"type":"event","id":"a1","event":{"kind":"progress","activity":"execute_gathering","elapsedSeconds":20}}"#)
-  transport.push(try fixture("event.progress"))
+  transport.push(#"{"type":"event","id":"a1","seq":1,"event":{"kind":"progress","activity":"execute_gathering","elapsedSeconds":20}}"#)
+  transport.push(try event("event.progress", seq: 2))
   await settle { session.entries.last?.body == .agent(.progress(activity: "execute_gathering", elapsedSeconds: 40)) }
   #expect(session.entries.count == 3)
   #expect(session.busy)
@@ -129,7 +159,7 @@ func staleMessagesAreIgnored() async throws {
   await session.ask("뭐 해")
   transport.push(try fixture("event.text"))
   transport.push(try fixture("approval_request"))
-  transport.push(#"{"type":"event","id":"a2","event":{"kind":"text","text":"보고 있다."}}"#)
+  transport.push(#"{"type":"event","id":"a2","seq":0,"event":{"kind":"text","text":"보고 있다."}}"#)
   await settle { session.entries.count == 2 }
   #expect(session.entries.last?.body == .agent(.text("보고 있다.")))
   #expect(session.approval == nil)
@@ -186,7 +216,7 @@ func cancelWithoutRunIsIgnored() async throws {
 }
 
 @MainActor
-@Test("PC가 연결을 닫으면 lost가 되고 진행 중인 ask와 승인 대기는 비워진다")
+@Test("PC가 연결을 닫으면 lost가 되고 승인 대기는 비워지지만 진행 중인 ask와 대화와 PC 이름은 남는다")
 func closedSocketIsLost() async throws {
   let transport = FakeTransport()
   let session = try await pairedSession(transport: transport)
@@ -195,9 +225,10 @@ func closedSocketIsLost() async throws {
   await settle { session.approval != nil }
   transport.close()
   await settle { session.phase == .lost(.closed) }
-  #expect(!session.busy)
+  #expect(session.busy)
   #expect(session.approval == nil)
-  #expect(session.entries.count == 1)
+  #expect(session.entries.map(\.body) == [.request("새록 버섯 100개 캐 줘")])
+  #expect(session.pcName == "SOAP-PC")
 }
 
 @MainActor
@@ -234,4 +265,148 @@ func pairAfterLostReconnects() async throws {
   #expect(session.phase == .pairing)
   #expect(await second.connects == 1)
   #expect(await second.sent.count == 1)
+}
+
+@MainActor
+@Test("이미 받은 seq 이하의 event는 버린다")
+func seenSeqIsDropped() async throws {
+  let transport = FakeTransport()
+  let session = try await pairedSession(transport: transport)
+  await session.ask("뭐 해")
+  transport.push(text("a1", seq: 0, "하나"))
+  transport.push(text("a1", seq: 1, "둘"))
+  transport.push(text("a1", seq: 0, "하나"))
+  transport.push(text("a1", seq: 1, "둘"))
+  transport.push(text("a1", seq: 2, "셋"))
+  await settle { session.entries.last?.body == .agent(.text("셋")) }
+  #expect(session.entries.map(\.body) == [.request("뭐 해"), .agent(.text("하나")), .agent(.text("둘")), .agent(.text("셋"))])
+}
+
+@MainActor
+@Test("새 ask는 seq를 0부터 다시 센다")
+func newAskRestartsSeq() async throws {
+  let transport = FakeTransport()
+  let session = try await pairedSession(transport: transport, ids: ["a1", "a2"])
+  await session.ask("하나")
+  transport.push(try fixture("event.done"))
+  await settle { !session.busy }
+  await session.ask("둘")
+  transport.push(text("a2", seq: 0, "둘째 답"))
+  await settle { session.entries.count == 4 }
+  #expect(session.entries.last?.body == .agent(.text("둘째 답")))
+}
+
+@MainActor
+@Test("reconnect는 새 연결을 열어 저장한 코드로 pair를 보내고, 다시 온 event 중 새것만 쌓으며 done이 오면 진행이 끝난다")
+func reconnectReplaysOnlyNewEvents() async throws {
+  let first = FakeTransport()
+  let second = FakeTransport()
+  let session = try await pairedSession(transport: first, then: [second])
+  await session.ask("통나무 채집해")
+  first.push(text("a1", seq: 0, "하나"))
+  first.push(text("a1", seq: 1, "둘"))
+  await settle { session.entries.count == 3 }
+  await session.reconnect()
+  #expect(await second.connects == 1)
+  #expect(try json(await second.sent[0]) == ["type": "pair", "code": "123456"])
+  second.push(try fixture("paired"))
+  second.push(try fixture("status"))
+  second.push(text("a1", seq: 0, "하나"))
+  second.push(text("a1", seq: 1, "둘"))
+  second.push(try event("event.done", seq: 2))
+  await settle { !session.busy }
+  #expect(session.phase == .paired(pcName: "SOAP-PC"))
+  #expect(session.entries.map(\.body) == [
+    .request("통나무 채집해"),
+    .agent(.text("하나")),
+    .agent(.text("둘")),
+    .agent(.done(text: "채집을 시작했다.", turns: 3, costUsd: 0.0312)),
+  ])
+}
+
+@MainActor
+@Test("reconnect는 열린 연결을 닫고, 그 닫힘이 phase를 lost로 덮지 않는다")
+func reconnectClosesWithoutLoss() async throws {
+  let inner = FakeTransport()
+  let first = Watched(inner)
+  let second = FakeTransport()
+  let transports = Transports([first, second])
+  let session = Session(makeTransport: { transports.next() })
+  await session.pair(code: "123456")
+  inner.push(try fixture("paired"))
+  await settle { session.pcName != nil }
+  await session.reconnect()
+  #expect(session.phase == .pairing)
+  #expect(first.closed)
+  try await Task.sleep(for: .milliseconds(50))
+  #expect(session.phase == .pairing)
+}
+
+@MainActor
+@Test("reconnect 뒤 다시 온 approval_request가 승인 대기에 실린다")
+func reconnectReceivesApprovalAgain() async throws {
+  let first = FakeTransport()
+  let second = FakeTransport()
+  let session = try await pairedSession(transport: first, then: [second])
+  await session.ask("새록 버섯 100개 캐 줘")
+  first.push(try fixture("approval_request"))
+  await settle { session.approval != nil }
+  await session.reconnect()
+  #expect(session.approval == nil)
+  second.push(try fixture("paired"))
+  second.push(try fixture("approval_request"))
+  await settle { session.approval != nil }
+  #expect(session.approval?.id == "r1")
+}
+
+@MainActor
+@Test("다시 연결하지 못하면 lost(unreachable)가 되고 대화와 진행 중인 ask는 남는다")
+func failedReconnectKeepsConversation() async throws {
+  let first = FakeTransport()
+  let session = try await pairedSession(transport: first, then: [FakeTransport(reachable: false)])
+  await session.ask("통나무 채집해")
+  first.push(text("a1", seq: 0, "하나"))
+  await settle { session.entries.count == 2 }
+  await session.reconnect()
+  #expect(session.phase == .lost(.unreachable))
+  #expect(session.busy)
+  #expect(session.entries.map(\.body) == [.request("통나무 채집해"), .agent(.text("하나"))])
+}
+
+@MainActor
+@Test("페어링한 적 없으면 reconnect는 연결을 열지 않는다")
+func reconnectWithoutPairingDoesNothing() async {
+  let transport = FakeTransport()
+  let session = Session(makeTransport: { transport })
+  await session.reconnect()
+  #expect(await transport.connects == 0)
+  #expect(session.phase == .disconnected)
+}
+
+@MainActor
+@Test("disconnect하면 PC 이름과 진행 중인 ask가 비고 reconnect는 연결을 열지 않는다")
+func disconnectForgetsPairing() async throws {
+  let transport = FakeTransport()
+  let session = try await pairedSession(transport: transport)
+  await session.ask("뭐 해")
+  session.disconnect()
+  #expect(session.pcName == nil)
+  #expect(!session.busy)
+  await session.reconnect()
+  #expect(await transport.connects == 1)
+  #expect(session.phase == .disconnected)
+}
+
+@MainActor
+@Test("다시 연결하는 중에 겹쳐 부른 reconnect는 새 연결을 하나만 연다")
+func overlappingReconnectOpensOnce() async throws {
+  let first = FakeTransport()
+  let second = FakeTransport()
+  let third = FakeTransport()
+  let session = try await pairedSession(transport: first, then: [second, third])
+  async let one: Void = session.reconnect()
+  async let two: Void = session.reconnect()
+  _ = await (one, two)
+  #expect(await second.connects == 1)
+  #expect(await third.connects == 0)
 }

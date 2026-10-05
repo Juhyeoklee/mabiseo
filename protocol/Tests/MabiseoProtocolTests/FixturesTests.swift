@@ -52,6 +52,6 @@ func unknownFieldFails() {
 
 @Test("이벤트 안의 모르는 필드도 디코드에 실패한다")
 func unknownEventFieldFails() {
-  let data = Data(#"{"type":"event","id":"a1","event":{"kind":"text","text":"안녕","bold":true}}"#.utf8)
+  let data = Data(#"{"type":"event","id":"a1","seq":0,"event":{"kind":"text","text":"안녕","bold":true}}"#.utf8)
   #expect(throws: DecodingError.self) { try JSONDecoder().decode(DesktopMessage.self, from: data) }
 }
