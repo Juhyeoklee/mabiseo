@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 오래 떠 있는 serve를 Windows 로그인 세션에서 띄우고 · 끄고 · 본다. 작업 스케줄러 작업 mabiseo-serve가 돈다(scripts/win-setup).
+# 오래 떠 있는 상태 창 앱(D1)을 Windows 로그인 세션에서 띄우고 · 끄고 · 본다. 작업 스케줄러 작업 mabiseo-serve가 돈다(scripts/win-setup).
 # 사용: scripts/win-serve start [serve 인자...] | stop | log [줄 수] | status
 set -eu
 [ $# -gt 0 ] || { echo "사용: scripts/win-serve start [--real --code=NNNNNN --trace=DIR ...] | stop | log [줄 수] | status" >&2; exit 2; }
@@ -11,7 +11,7 @@ action="$1"; shift
 case "$action" in
 start)
   tmp="$(mktemp -d)"
-  printf '%s\n' "npm run -s serve -- $*" > "$tmp/serve.cmd.txt"
+  printf '%s\n' "npm run -s app -- $*" > "$tmp/serve.cmd.txt"
   printf '%s\n' "$repo\\desktop" > "$tmp/serve.cwd.txt"
   scp -q "$tmp/serve.cmd.txt" "$tmp/serve.cwd.txt" "mabiseo-win:$runner_scp/"
   rm -rf "$tmp"

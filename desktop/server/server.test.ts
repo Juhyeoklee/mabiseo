@@ -7,7 +7,7 @@ import type { Connector, Json } from "../connector/connector.js";
 import { FakeConnector } from "../connector/fake.js";
 import { readJson } from "../connector/recordings.js";
 import { Tools } from "../tools/tools.js";
-import { Server, type Ask } from "./server.js";
+import { Server, type Ask, type Report, type ServerView } from "./server.js";
 
 const recordings = fileURLToPath(new URL("../../recordings/", import.meta.url));
 const code = "482913";
@@ -80,6 +80,10 @@ function waitForAbort(session: Session): Promise<void> {
   return new Promise((resolve) => signal.addEventListener("abort", () => resolve()));
 }
 
+function settle(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function gate(): { wait: Promise<void>; open: () => void } {
   let open = (): void => undefined;
   const wait = new Promise<void>((resolve) => (open = resolve));
@@ -92,10 +96,43 @@ const hangingAsk: Ask = async (_prompt, session) => {
   session.onEvent({ kind: "failed", reason: "aborted by sdk" });
 };
 
-async function serve(ask: Ask, fail?: "login" | "offline"): Promise<{ server: Server; tools: Tools }> {
+class Notes implements Report {
+  readonly views: ServerView[] = [];
+  readonly logs: string[] = [];
+  private readonly checks: (() => void)[] = [];
+
+  view(view: ServerView): void {
+    this.views.push(view);
+    this.wake();
+  }
+
+  log(line: string): void {
+    this.logs.push(line);
+    this.wake();
+  }
+
+  until(done: () => boolean): Promise<void> {
+    if (done()) return Promise.resolve();
+    return new Promise((resolve) => {
+      const check = (): void => {
+        if (!done()) return;
+        this.checks.splice(this.checks.indexOf(check), 1);
+        resolve();
+      };
+      this.checks.push(check);
+    });
+  }
+
+  private wake(): void {
+    for (const check of [...this.checks]) check();
+  }
+}
+
+async function serve(ask: Ask, fail?: "login" | "offline"): Promise<{ server: Server; tools: Tools; notes: Notes }> {
   const tools = new Tools(await FakeConnector.fromDirectory(recordings, fail), 10);
-  const server = await Server.start({ port: 0, code, pcName, tools, ask });
-  return { server, tools };
+  const notes = new Notes();
+  const server = await Server.start({ port: 0, code, pcName, tools, ask, report: notes });
+  return { server, tools, notes };
 }
 
 describe("페어링", () => {
@@ -165,7 +202,7 @@ describe("대화", () => {
       },
     };
     const tools = new Tools(connector, 10);
-    const server = await Server.start({ port: 0, code, pcName, tools, ask: echoAsk });
+    const server = await Server.start({ port: 0, code, pcName, tools, ask: echoAsk, report: new Notes() });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     for (const id of ["a1", "a2"]) {
@@ -453,7 +490,7 @@ describe("중단", () => {
   async function serveGathering(): Promise<{ server: Server; tools: Tools; connector: Gathering }> {
     const connector = await Gathering.load();
     const tools = new Tools(connector, 10);
-    const server = await Server.start({ port: 0, code, pcName, tools, ask: gatheringUntilStopped });
+    const server = await Server.start({ port: 0, code, pcName, tools, ask: gatheringUntilStopped, report: new Notes() });
     return { server, tools, connector };
   }
 
@@ -537,7 +574,7 @@ describe("중단", () => {
       await gatheringUntilStopped(prompt, session);
     };
     const connector = await Gathering.load();
-    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask });
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask, report: new Notes() });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     phone.send({ type: "ask", id: "a1", text: "통나무 채집해" });
@@ -552,7 +589,7 @@ describe("중단", () => {
   test("활동이 없으면 cancel은 stop_action을 보내지 않는다", async () => {
     const connector = new Counting(await FakeConnector.fromDirectory(recordings));
     const tools = new Tools(connector, 10);
-    const server = await Server.start({ port: 0, code, pcName, tools, ask: hangingAsk });
+    const server = await Server.start({ port: 0, code, pcName, tools, ask: hangingAsk, report: new Notes() });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
@@ -684,6 +721,298 @@ describe("다시 페어링", () => {
     expect(await first.next()).toEqual(cancelled);
     expect(await third.next()).toEqual(cancelled);
     for (const phone of [first, second, third]) phone.close();
+    await server.close();
+  });
+});
+
+describe("상태 창 보고", () => {
+  const phoneAddress = "127.0.0.1";
+
+  test("시작 직후 view는 폰 없이 대기 중이고 게임 상태와 날개를 담는다", async () => {
+    const { server } = await serve(echoAsk);
+    expect(server.view()).toEqual({ connector: "connected", wings: 10, phones: [], asking: false });
+    await server.close();
+  });
+
+  test("페어링하면 phones에 폰 주소가 들어가고 「폰 연결」 로그가 남는다", async () => {
+    const { server, notes } = await serve(echoAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    expect(server.view().phones).toEqual([phoneAddress]);
+    expect(notes.views.at(-1)?.phones).toEqual([phoneAddress]);
+    expect(notes.logs).toEqual([`폰 연결: ${phoneAddress}`]);
+    phone.close();
+    await server.close();
+  });
+
+  test("페어링한 폰이 끊기면 phones에서 빠지고 「폰 끊김」 로그가 남는다", async () => {
+    const { server, notes } = await serve(echoAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.close();
+    await notes.until(() => notes.logs.includes(`폰 끊김: ${phoneAddress}`));
+    expect(server.view().phones).toEqual([]);
+    expect(notes.views.at(-1)?.phones).toEqual([]);
+    expect(notes.logs).toEqual([`폰 연결: ${phoneAddress}`, `폰 끊김: ${phoneAddress}`]);
+    await server.close();
+  });
+
+  test("페어링하지 않은 소켓이 끊기면 아무것도 보고하지 않는다", async () => {
+    const { server, notes } = await serve(echoAsk);
+    const stranger = await Phone.connect(server.port);
+    stranger.close();
+    await stranger.closed;
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    expect(notes.logs).toEqual([`폰 연결: ${phoneAddress}`]);
+    expect(notes.views).toHaveLength(1);
+    phone.close();
+    await server.close();
+  });
+
+  test("틀린 코드는 「페어링 실패」 로그만 남기고 phones는 비어 있다", async () => {
+    const { server, notes } = await serve(echoAsk);
+    const phone = await Phone.connect(server.port);
+    phone.send({ type: "pair", code: "000000" });
+    expect(await phone.next()).toEqual({ type: "pair_failed", reason: "wrong_code" });
+    expect(notes.logs).toEqual([`페어링 실패: ${phoneAddress} 코드가 틀림`]);
+    expect(notes.views).toEqual([]);
+    expect(server.view().phones).toEqual([]);
+    phone.close();
+    await server.close();
+  });
+
+  test("요청이 도는 동안 asking이 true로, 끝나면 false로 보고된다", async () => {
+    const { server, notes } = await serve(hangingAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "started" } });
+    expect(server.view().asking).toBe(true);
+    expect(notes.views.at(-1)?.asking).toBe(true);
+    phone.send({ type: "cancel", id: "a1" });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "failed" } });
+    expect((await phone.next()).type).toBe("status");
+    expect(server.view().asking).toBe(false);
+    expect(notes.views.at(-1)?.asking).toBe(false);
+    phone.close();
+    await server.close();
+  });
+
+  test("요청 · 승인 요청 · 승인 답 · 끝이 로그에 순서대로 남는다", async () => {
+    const { server, notes } = await serve(gatheringAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "채집해 줘" });
+    await phone.next();
+    const request = await phone.next();
+    if (request.type !== "approval_request") throw new Error(request.type);
+    phone.send({ type: "approve", id: request.id, allow: true });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "done" } });
+    expect(notes.logs).toEqual([
+      `폰 연결: ${phoneAddress}`,
+      "요청: 채집해 줘",
+      "승인 요청: execute_gathering · 날개 5",
+      "승인 허용: execute_gathering",
+      "끝: 완료 · 1턴 · $0.000",
+    ]);
+    phone.close();
+    await server.close();
+  });
+
+  test("도구 event는 「도구」 로그로 남는다", async () => {
+    const ask: Ask = async (_prompt, session) => {
+      session.onEvent({ kind: "tool", name: "get_my_info", input: {} });
+      session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
+    };
+    const { server, notes } = await serve(ask);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "내 정보" });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "tool" } });
+    expect(notes.logs).toContain("도구: get_my_info");
+    phone.close();
+    await server.close();
+  });
+
+  test("취소된 요청은 「취소 요청」과 「끝: 실패 (cancelled)」로 남는다", async () => {
+    const { server, notes } = await serve(hangingAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
+    await phone.next();
+    phone.send({ type: "cancel", id: "a1" });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
+    expect(notes.logs).toEqual([`폰 연결: ${phoneAddress}`, "요청: 오래 걸리는 일", "취소 요청", "끝: 실패 (cancelled)"]);
+    phone.close();
+    await server.close();
+  });
+
+  test("처리 중에 들어온 요청은 「요청 거절」로 남는다", async () => {
+    const { server, notes } = await serve(hangingAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "첫째" });
+    await phone.next();
+    phone.send({ type: "ask", id: "a2", text: "둘째" });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a2", event: { kind: "failed", reason: "busy" } });
+    expect(notes.logs).toContain("요청 거절: 처리 중인 요청이 있음");
+    phone.send({ type: "cancel", id: "a1" });
+    await phone.next();
+    phone.close();
+    await server.close();
+  });
+
+  test("recheck는 로그를 남기고 상태를 다시 조회해 페어링된 폰에 status를 보내고 view를 보고한다", async () => {
+    let calls = 0;
+    const connector: Connector = {
+      run: async () => (calls++ === 0 ? { pipe: "connected" } : { pipe: "disconnected", reason: "game_off" }),
+    };
+    const notes = new Notes();
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: echoAsk, report: notes });
+    expect(server.view().connector).toBe("connected");
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    const before = calls;
+    await server.recheck();
+    expect(calls).toBe(before + 1);
+    expect(await phone.next()).toEqual({ type: "status", connector: "disconnected", wings: 10 });
+    expect(notes.views.at(-1)?.connector).toBe("disconnected");
+    expect(notes.logs.at(-1)).toBe("상태 다시 확인");
+    phone.close();
+    await server.close();
+  });
+
+  test("요청이 도는 동안 recheck는 CLI를 부르지 않고 나중에 확인한다고 로그를 남긴다", async () => {
+    const connector = new Counting(await FakeConnector.fromDirectory(recordings));
+    const notes = new Notes();
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: hangingAsk, report: notes });
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
+    await phone.next();
+    const before = connector.calls.length;
+    await server.recheck();
+    expect(connector.calls).toHaveLength(before);
+    expect(notes.logs.at(-1)).toBe("상태 다시 확인: 요청이 끝난 뒤에 확인한다");
+    phone.send({ type: "cancel", id: "a1" });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
+    phone.close();
+    await server.close();
+  });
+
+  test("상태 조회가 도는 중에 들어온 요청은 조회가 끝난 뒤에 에이전트를 시작한다", async () => {
+    const held = gate();
+    let calls = 0;
+    const connector: Connector = {
+      run: async () => {
+        if (calls++ === 2) await held.wait;
+        return { pipe: "connected" };
+      },
+    };
+    let started = false;
+    const watchingAsk: Ask = async (_prompt, session) => {
+      started = true;
+      session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
+    };
+    const notes = new Notes();
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: watchingAsk, report: notes });
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    const rechecked = server.recheck();
+    phone.send({ type: "ask", id: "a1", text: "날개 얼마나 남았어" });
+    await notes.until(() => notes.logs.includes("요청: 날개 얼마나 남았어"));
+    expect(started).toBe(false);
+    held.open();
+    await rechecked;
+    await notes.until(() => notes.logs.includes("끝: 완료 · 1턴 · $0.000"));
+    expect(started).toBe(true);
+    phone.close();
+    await server.close();
+  });
+
+  test("상태 조회 둘이 겹치면 요청은 둘 다 끝난 뒤에 에이전트를 시작한다", async () => {
+    const held = gate();
+    let calls = 0;
+    const connector: Connector = {
+      run: async () => {
+        if (calls++ === 2) await held.wait;
+        return { pipe: "connected" };
+      },
+    };
+    let started = false;
+    const watchingAsk: Ask = async (_prompt, session) => {
+      started = true;
+      session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
+    };
+    const notes = new Notes();
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: watchingAsk, report: notes });
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    const rechecked = server.recheck();
+    const other = await Phone.connect(server.port);
+    await other.pair();
+    other.send({ type: "ask", id: "a1", text: "날개 얼마나 남았어" });
+    await notes.until(() => notes.logs.includes("요청: 날개 얼마나 남았어"));
+    await settle();
+    expect(started).toBe(false);
+    held.open();
+    await rechecked;
+    await notes.until(() => notes.logs.includes("끝: 완료 · 1턴 · $0.000"));
+    expect(started).toBe(true);
+    phone.close();
+    other.close();
+    await server.close();
+  });
+
+  test("상태 조회를 기다리는 사이에 취소된 요청은 에이전트를 띄우지 않고 취소로 끝난다", async () => {
+    const held = gate();
+    let calls = 0;
+    const connector: Connector = {
+      run: async () => {
+        if (calls++ === 2) await held.wait;
+        return { pipe: "connected" };
+      },
+    };
+    let started = false;
+    const watchingAsk: Ask = async (_prompt, session) => {
+      started = true;
+      session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
+    };
+    const notes = new Notes();
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: watchingAsk, report: notes });
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    const rechecked = server.recheck();
+    phone.send({ type: "ask", id: "a1", text: "날개 얼마나 남았어" });
+    await notes.until(() => notes.logs.includes("요청: 날개 얼마나 남았어"));
+    phone.send({ type: "cancel", id: "a1" });
+    await notes.until(() => notes.logs.includes("취소 요청"));
+    held.open();
+    await rechecked;
+    await notes.until(() => notes.logs.includes("끝: 실패 (cancelled)"));
+    expect(started).toBe(false);
+    phone.close();
+    await server.close();
+  });
+
+  test("recheck 중 상태 조회가 던지면 로그를 남기고 마지막 상태를 보낸다", async () => {
+    let calls = 0;
+    const connector: Connector = {
+      run: async () => {
+        if (calls++ > 0) throw new Error("CLI 없음");
+        return { pipe: "connected" };
+      },
+    };
+    const notes = new Notes();
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: echoAsk, report: notes });
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    const seen = notes.logs.length;
+    await server.recheck();
+    expect(await phone.next()).toEqual({ type: "status", connector: "connected", wings: 10 });
+    expect(notes.logs.slice(seen)).toEqual(["상태 다시 확인", "상태 조회 실패, 마지막 값을 보낸다: CLI 없음"]);
+    phone.close();
     await server.close();
   });
 });

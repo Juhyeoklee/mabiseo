@@ -174,6 +174,13 @@ describe("날개 예산", () => {
     expect(tools.wings).toBe(5);
   });
 
+  it("가공 대기열이 가득 차 막힌 실물 가공 등록 응답도 cost대로 5개를 깎는다", async () => {
+    const blocked = await readJson(dir, "queue-full/execute_altering.json");
+    const tools = new Tools(refusing(() => blocked, [100]), 10);
+    expect(await tools.call("execute_altering", { displayName: "철괴(철 광석)" })).toMatchObject({ error: "blocked", kind: "unknown_modal" });
+    expect(tools.wings).toBe(5);
+  });
+
   it("부활 대기의 blocked처럼 시작 전에 거부돼 실제 날개가 그대로면 예산이 줄지 않는다", async () => {
     const currencies = await readJson(dir, "get_currencies.json");
     const blocked = await readJson(dir, "reviving/execute_gathering.json");

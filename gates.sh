@@ -37,6 +37,8 @@ if [ -d desktop ]; then
   zero "agent/는 connector를 import하지 않음(테스트 제외)" grep -rn -E "from ['\"].*connector" desktop/agent --include='*.ts' --exclude='*.test.ts'
   zero "전송층(ws · bonjour-service · protocol/)은 server/에만" grep -rln -E "from ['\"](ws|bonjour-service|.*protocol/)" desktop --include='*.ts' --exclude-dir=node_modules --exclude-dir=server
   zero "맡기기 명령 이름은 tools/와 connector/에만(테스트 제외)" grep -rn -E "execute_(gathering|altering|crafting)|complete_altering_work|play_music_score|change_instrument|stop_action|stand_up" desktop --include='*.ts' --exclude='*.test.ts' --exclude-dir=node_modules --exclude-dir=connector --exclude-dir=tools
+  zero "electron은 app/에만" grep -rln -E "from ['\"]electron['\"]" desktop --include='*.ts' --exclude-dir=node_modules --exclude-dir=app
+  zero "app/은 connector · tools · agent를 import하지 않음" grep -rn -E "from ['\"]\.\./(connector|tools|agent)/" desktop/app --include='*.ts'
   [ -d desktop/node_modules ] || run "desktop: npm ci" npm --prefix desktop ci --silent
   run "desktop: tsc"    npm --prefix desktop run -s typecheck
   run "desktop: 테스트" npm --prefix desktop test -s -- --reporter=dot

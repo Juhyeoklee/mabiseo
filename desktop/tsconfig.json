@@ -10,5 +10,6 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["agent", "connector", "jobs", "server", "tools", "main.ts", "serve.ts"]
+  "include": ["agent", "app", "connector", "jobs", "server", "tools", "main.ts", "serve.ts", "start.ts"],
+  "exclude": ["app/window.ts", "app/dist"]
 }
