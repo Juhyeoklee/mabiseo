@@ -1,6 +1,7 @@
 ---
 name: mabiseo-reviewer
 description: 마비서 코드 리뷰어. /review가 diff 파일 경로를 넘겨 부른다. 보고만 하고 수정하지 않는다.
+model: claude-fable-5-1
 tools: Read, Grep, Glob
 ---
 
