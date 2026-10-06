@@ -268,6 +268,42 @@ describe("대화", () => {
     await server.close();
   });
 
+  test("직전 ask와 같은 id의 ask는 에이전트를 부르지 않고 failed(duplicate_id)로 거절되며, 다음 새 id는 받는다", async () => {
+    const prompts: string[] = [];
+    const recordingAsk: Ask = async (prompt, session) => {
+      prompts.push(prompt);
+      await echoAsk(prompt, session);
+    };
+    const { server, notes } = await serve(recordingAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "첫째" });
+    for (let i = 0; i < 3; i++) await phone.next();
+    expect((await phone.next()).type).toBe("status");
+    phone.send({ type: "ask", id: "a1", text: "다시" });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "failed", reason: "duplicate_id" } });
+    expect(notes.logs).toContain("요청 거절: 직전 요청과 같은 id");
+    phone.send({ type: "ask", id: "a2", text: "둘째" });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a2", seq: 0, event: { kind: "started" } });
+    expect(prompts).toEqual(["첫째", "둘째"]);
+    phone.close();
+    await server.close();
+  });
+
+  test("도는 중인 ask와 같은 id의 ask는 busy가 아니라 duplicate_id로 거절된다", async () => {
+    const { server } = await serve(hangingAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "첫째" });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a1", seq: 0, event: { kind: "started" } });
+    phone.send({ type: "ask", id: "a1", text: "다시" });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "failed", reason: "duplicate_id" } });
+    phone.send({ type: "cancel", id: "a1" });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
+    phone.close();
+    await server.close();
+  });
+
   test("done 직후의 ask는 busy 없이 받고, 앞 요청의 상태 조회가 끝난 뒤에 에이전트를 시작한다", async () => {
     const held = gate();
     let calls = 0;
@@ -755,6 +791,34 @@ describe("다시 페어링", () => {
     expect(await first.next()).toEqual(cancelled);
     expect(await third.next()).toEqual(cancelled);
     for (const phone of [first, second, third]) phone.close();
+    await server.close();
+  });
+
+  test("같은 id로 거절된 ask는 그 폰에만 가고 기록에 남지 않아, 다시 페어링하면 앞 ask의 기록만 다시 온다", async () => {
+    const { server } = await serve(echoAsk);
+    const observer = await Phone.connect(server.port);
+    await observer.pair();
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "첫째" });
+    for (const each of [phone, observer]) {
+      for (let i = 0; i < 3; i++) await each.next();
+      expect((await each.next()).type).toBe("status");
+    }
+    phone.send({ type: "ask", id: "a1", text: "다시" });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a1", seq: 0, event: { kind: "failed", reason: "duplicate_id" } });
+    phone.close();
+    await phone.closed;
+    const again = await Phone.connect(server.port);
+    await again.pair();
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "started", model: "fake" } });
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "text", text: "첫째" } });
+    expect(await again.next()).toEqual({ type: "event", id: "a1", seq: 2, event: { kind: "done", text: "첫째", turns: 1, costUsd: 0 } });
+    again.send({ type: "ask", id: "a2", text: "둘째" });
+    expect(await again.next()).toMatchObject({ type: "event", id: "a2", seq: 0, event: { kind: "started" } });
+    expect(await observer.next()).toMatchObject({ type: "event", id: "a2", seq: 0, event: { kind: "started" } });
+    observer.close();
+    again.close();
     await server.close();
   });
 });

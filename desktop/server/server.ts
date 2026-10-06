@@ -140,6 +140,10 @@ export class Server {
 
   private async ask(socket: WebSocket, id: string, text: string): Promise<void> {
     this.options.report.log(`요청: ${text}`);
+    if (this.last?.id === id) {
+      this.options.report.log("요청 거절: 직전 요청과 같은 id");
+      return send(socket, eventMessage(id, 0, { kind: "failed", reason: "duplicate_id" }));
+    }
     if (this.run) {
       this.options.report.log("요청 거절: 처리 중인 요청이 있음");
       return send(socket, eventMessage(id, 0, { kind: "failed", reason: "busy" }));
