@@ -268,6 +268,40 @@ describe("대화", () => {
     await server.close();
   });
 
+  test("done 직후의 ask는 busy 없이 받고, 앞 요청의 상태 조회가 끝난 뒤에 에이전트를 시작한다", async () => {
+    const held = gate();
+    let calls = 0;
+    const connector: Connector = {
+      run: async () => {
+        if (calls++ === 2) await held.wait;
+        return { pipe: "connected" };
+      },
+    };
+    const prompts: string[] = [];
+    const recordingAsk: Ask = async (prompt, session) => {
+      prompts.push(prompt);
+      session.onEvent({ kind: "done", text: prompt, turns: 1, costUsd: 0 });
+    };
+    const notes = new Notes();
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: recordingAsk, report: notes });
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "첫째" });
+    expect(await phone.next()).toMatchObject({ type: "event", id: "a1", seq: 0, event: { kind: "done" } });
+    phone.send({ type: "ask", id: "a2", text: "둘째" });
+    await notes.until(() => notes.logs.includes("요청: 둘째"));
+    await settle();
+    expect(prompts).toEqual(["첫째"]);
+    held.open();
+    const rest = [await phone.next(), await phone.next(), await phone.next()];
+    expect(rest).toContainEqual({ type: "event", id: "a2", seq: 0, event: { kind: "done", text: "둘째", turns: 1, costUsd: 0 } });
+    expect(rest.filter((message) => message.type === "status")).toHaveLength(2);
+    expect(prompts).toEqual(["첫째", "둘째"]);
+    expect(notes.logs).not.toContain("요청 거절: 처리 중인 요청이 있음");
+    phone.close();
+    await server.close();
+  });
+
   test("cancel하면 failed(cancelled)가 한 번만 오고 다음 ask를 받는다", async () => {
     let calls = 0;
     const ask: Ask = (prompt, session) => (calls++ === 0 ? hangingAsk(prompt, session) : echoAsk(prompt, session));

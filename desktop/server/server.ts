@@ -147,7 +147,7 @@ export class Server {
     const run: Run = { id, abort: new AbortController(), events: [] };
     this.run = this.last = run;
     this.options.report.view(this.view());
-    // 상태 조회는 tools/의 재거부 차단을 푼다. 페어링이나 recheck가 시작한 조회가 모두 끝난 뒤에 에이전트를 띄운다
+    // 상태 조회는 tools/의 재거부 차단을 푼다. 페어링 · recheck · 앞 요청의 마무리가 시작한 조회가 모두 끝난 뒤에 에이전트를 띄운다
     await this.refreshing;
     let ended = false;
     const emit = (event: AgentEvent): void => {
@@ -175,10 +175,10 @@ export class Server {
     } finally {
       this.releaseApprovals(run);
     }
-    const status = await this.refreshStatus();
+    const status = this.refreshStatus();
     this.run = undefined;
     this.options.report.view(this.view());
-    this.broadcast(status);
+    this.broadcast(await status);
   }
 
   private approve(run: Run, name: string, input: ToolInput, wings: number): Promise<boolean> {
