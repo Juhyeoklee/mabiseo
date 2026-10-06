@@ -78,7 +78,7 @@ rm -rf .claude/design
 
 ## 6. 커밋 · 머지 (사용자 승인)
 
-커밋 메시지는 판정 서사 · 설계 근거 · 이관한 「왜」를 담는다. 마지막 줄은 `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
+커밋 메시지는 판정 서사 · 설계 근거 · 이관한 「왜」를 담는다. 마지막 줄은 `Co-Authored-By: Claude <모델 이름> <noreply@anthropic.com>`. 모델 이름은 이 세션의 메인 모델이다(`Claude Opus 5.5` · `Claude Fable 5.1`). 리뷰어는 저자가 아니다.
 
 머지 메시지의 꼬리는 킥오프 댓글의 「이슈」를 따른다. 「닫는다」면 `Closes #n`, 「이어간다」면 `Refs #n`.
 
