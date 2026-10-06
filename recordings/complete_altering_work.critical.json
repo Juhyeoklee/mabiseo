@@ -1,0 +1,16 @@
+{
+  "collected": 1,
+  "rewards": [
+    {
+      "Name": "강철괴",
+      "Amount": 3
+    }
+  ],
+  "criticalRewards": [
+    {
+      "Name": "강철괴",
+      "Amount": 1
+    }
+  ],
+  "message": "Collected 1 altering works."
+}

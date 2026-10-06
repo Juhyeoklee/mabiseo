@@ -498,17 +498,17 @@ describe("가공 등록은 count번 되풀이된다", () => {
 });
 
 describe("가공 완료 기다리기", () => {
-  it("그 가공의 등록분이 모두 끝날 때까지 남은 시간만큼 자고 다시 보며, completed와 마지막 작업 목록을 돌려준다", async () => {
+  it("그 가공의 등록분이 모두 끝날 때까지 남은 시간과 진행 간격 중 짧은 쪽만큼 자고 다시 보며, completed와 마지막 작업 목록을 돌려준다", async () => {
     vi.useFakeTimers();
     const { connector, tools } = await workshopTools({ "철 광석": 20 }, 20);
     await tools.call("execute_altering", { ...ironIngot, count: 2 });
     let result: Json | undefined;
     void tools.call("wait_altering", ironIngot).then((r) => (result = r));
-    await vi.advanceTimersByTimeAsync(7_000);
+    await vi.advanceTimersByTimeAsync(59_000);
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(result).toMatchObject({ completed: true, works: { completedCount: 2 } });
-    expect(connector.calls.filter(([c]) => c === "get_altering_works")).toHaveLength(2);
+    expect(connector.calls.filter(([c]) => c === "get_altering_works")).toHaveLength(4);
     expect(connector.calls.map(([c]) => c)).not.toContain("wait_altering");
   });
 
@@ -519,7 +519,7 @@ describe("가공 완료 기다리기", () => {
     const seen: Progress[] = [];
     tools.watch((p) => seen.push(p));
     const waiting = tools.call("wait_altering", ironIngot);
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     await waiting;
     expect(seen[0]).toEqual({ activity: "wait_altering", elapsedSeconds: 0 });
   });
@@ -530,7 +530,7 @@ describe("가공 완료 기다리기", () => {
     await tools.call("execute_altering", ironIngot);
     const waiting = tools.call("wait_altering", ironIngot);
     expect(await tools.call("execute_gathering", { displayName: "철 광석" })).toMatchObject({ result: "completed" });
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     await waiting;
   });
 

@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "DisplayName": "강철괴",
+      "Alterable": false,
+      "ProducedPerWork": 3,
+      "Reason": "ingredient_locked",
+      "MissingIngredients": [
+        {
+          "DisplayName": "철괴",
+          "Required": 3,
+          "Owned": 0
+        }
+      ]
+    },
+    {
+      "DisplayName": "합금강괴",
+      "Alterable": true,
+      "ProducedPerWork": 3
+    }
+  ]
+}
