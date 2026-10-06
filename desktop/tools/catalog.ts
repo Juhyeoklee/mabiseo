@@ -101,7 +101,7 @@ export const catalog = [
     ...execute(
       "execute_altering",
       5,
-      "가공을 시설에 count번 등록. 등록마다 날개 5개. 거부되면 거기서 멈춘다. 결과는 registered와 마지막 응답 last. 완료는 wait_altering으로 기다린다",
+      "가공을 시설에 count번 등록. 등록마다 날개 5개. 거부되면 거기서 멈춘다. 결과는 registered와 마지막 응답 last. 완료는 wait_altering으로 기다린다. 시설의 칸이 다 차면 queue_full로 거절되니 complete_altering_work로 비운다",
       json(displayName("get_alterable_items")),
     ),
     repeat: { name: "count", type: "number", required: false, description: "등록 횟수. 기본 1, 최대 7" },
