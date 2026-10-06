@@ -71,7 +71,7 @@ export class Tools {
       this.rejected.clear();
       return response;
     }
-    if (!tool.repeat) return this.execute(name, tool, body, key);
+    if (!tool.repeat) return this.execute(name, tool, input, body, key);
 
     const times = input[tool.repeat.name] ?? 1;
     if (typeof times !== "number" || !Number.isInteger(times) || times < 1 || times > queueSlots) {
@@ -80,14 +80,14 @@ export class Tools {
     let registered = 0;
     let last: Json = null;
     while (registered < times) {
-      last = await this.execute(name, tool, body, key);
+      last = await this.execute(name, tool, input, body, key);
       if (isRefused(last)) break;
       registered += 1;
     }
     return { registered, requested: times, last };
   }
 
-  private async execute(name: ToolName, tool: ToolSpec, body: string | undefined, key: string): Promise<Json> {
+  private async execute(name: ToolName, tool: ToolSpec, input: ToolInput, body: string | undefined, key: string): Promise<Json> {
     const current = this.jobs.current;
     if (current && name !== "stop_action") {
       return { error: "busy", message: `${current.name}이 끝나기 전에는 다른 맡기기를 부르지 않는다. 새 활동이 앞 활동을 취소한다` };
@@ -100,12 +100,15 @@ export class Tools {
     }
 
     let response: Json;
+    let guarded: Json | undefined;
     if (name === "stop_action") {
       response = await this.connector.run(name, body, executeTimeoutMs);
       await this.jobs.recheck();
     } else {
-      // 날개 조회와 차감은 jobs가 활동을 붙든 동안에 끝낸다. 붙들기 밖에서 기다리면 그 틈에 다른 맡기기가 busy와 예산 검사를 옛 값으로 지난다
+      // 대기열 · 날개 조회와 차감은 jobs가 활동을 붙든 동안에 끝낸다. 붙들기 밖에서 기다리면 그 틈에 다른 맡기기가 busy · 칸 · 예산 검사를 옛 값으로 지난다
       response = await this.jobs.run(name, async () => {
+        guarded = name === "execute_altering" ? await this.queueFull(String(input.displayName)) : undefined;
+        if (guarded !== undefined) return guarded;
         const before = tool.wings > 0 ? await this.wingsInGame() : undefined;
         const calledAt = Date.now();
         const result = await this.connector.run(name, body, executeTimeoutMs);
@@ -113,7 +116,8 @@ export class Tools {
         return result;
       });
     }
-    if (isRefused(response)) this.rejected.add(key);
+    // 대기열 거절은 CLI에 닿지 않고 매번 새로 센다. 차단에 넣으면 수령한 뒤의 재등록이 막힌다
+    if (isRefused(response) && guarded === undefined) this.rejected.add(key);
     return response;
   }
 
@@ -138,6 +142,22 @@ export class Tools {
     } finally {
       this.waits.delete(waiting);
     }
+  }
+
+  // get_alterable_items에는 시설이 없어서(recordings/get_alterable_items.json) 대기열에 같은 가공이 있을 때만 시설을 안다. 없으면 막지 않는다
+  private async queueFull(displayName: string): Promise<Json | undefined> {
+    const works = await this.connector.run("get_altering_works", undefined, queryTimeoutMs);
+    if (isRefused(works)) return works;
+    const list = field(works, "works");
+    if (!Array.isArray(list)) return undefined;
+    const same = list.find((w) => field(w, "DisplayName") === displayName);
+    const facilityName = same === undefined ? undefined : field(same, "FacilityName");
+    if (typeof facilityName !== "string") return undefined;
+    if (list.filter((w) => field(w, "FacilityName") === facilityName).length < queueSlots) return undefined;
+    return {
+      error: "queue_full",
+      message: `${facilityName}의 ${queueSlots}칸이 다 찼다. complete_altering_work로 완료분을 수령해 칸을 비운 뒤에 등록한다`,
+    };
   }
 
   // blocked처럼 시작 전과 후 양쪽에 나오는 거부는 코드만으로 못 가른다(recordings/reviving/execute_gathering.json은 시작 전 거부였다).

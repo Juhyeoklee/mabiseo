@@ -12,7 +12,7 @@ const unknownItem = { displayName: "마비서없는아이템" };
 const notFound = { error: "not_found", message: expect.any(String) };
 const idle = (await readJson(dir, "get_activity.json")) as { [key: string]: Json; Mode: { [key: string]: Json } };
 const fishing: Json = { ...idle, Mode: { ...idle.Mode, MainButtonState: "Fishing" } };
-const executes = (calls: string[]): string[] => calls.filter((c) => c !== "get_activity" && c !== "get_currencies");
+const executes = (calls: string[]): string[] => calls.filter((c) => c !== "get_activity" && c !== "get_currencies" && c !== "get_altering_works");
 
 afterEach(() => {
   vi.useRealTimers();
@@ -53,6 +53,7 @@ function refusing(respond: () => Json, amounts: number[]): Connector {
   let last: number | undefined;
   return {
     run: async (command) => {
+      if (command === "get_altering_works") return { completedCount: 0, works: [] };
       if (command !== "get_currencies") return respond();
       last = amounts.shift() ?? last;
       return last === undefined ? { error: "unreadable", message: "" } : wingsOf(last);
@@ -497,11 +498,90 @@ describe("가공 등록은 count번 되풀이된다", () => {
   });
 });
 
+const recordedWorks = await readJson(dir, "get_altering_works.json");
+const queueFull = await readJson(dir, "queue-full/execute_altering.json");
+
+describe("가공 대기열의 빈 칸", () => {
+  const metal = "금속 가공 시설";
+
+  function queueConnector(works: Json): Counting {
+    return new Counting({
+      run: async (command) => {
+        if (command === "get_altering_works") return works;
+        if (command === "get_currencies") return wingsOf(100);
+        return queueFull;
+      },
+    });
+  }
+
+  function withoutOne(facility: string): Json {
+    const list = (recordedWorks as { works: { FacilityName: string }[] }).works;
+    const index = list.findIndex((w) => w.FacilityName === facility);
+    return { ...(recordedWorks as object), works: list.filter((_, i) => i !== index) };
+  }
+
+  it("녹화처럼 그 가공의 시설 7칸이 다 차 있으면 등록을 부르지 않고 queue_full로 거절하며 예산이 줄지 않는다", async () => {
+    const connector = queueConnector(recordedWorks);
+    const tools = new Tools(connector, 10);
+    expect(await tools.call("execute_altering", ironIngot)).toMatchObject({ registered: 0, last: { error: "queue_full" } });
+    expect(connector.calls.map(([c]) => c)).not.toContain("execute_altering");
+    expect(tools.wings).toBe(10);
+  });
+
+  it("그 시설에 한 칸이 비어 있으면 등록을 부른다", async () => {
+    const connector = queueConnector(withoutOne(metal));
+    await new Tools(connector, 10).call("execute_altering", ironIngot);
+    expect(connector.calls.map(([c]) => c)).toContain("execute_altering");
+  });
+
+  it("칸은 그 가공의 시설 것만 센다", async () => {
+    const connector = queueConnector(withoutOne(metal));
+    await new Tools(connector, 10).call("execute_altering", { displayName: "가죽" });
+    expect(connector.calls.map(([c]) => c)).not.toContain("execute_altering");
+    const leatherOpen = queueConnector(withoutOne("가죽 가공 시설"));
+    await new Tools(leatherOpen, 10).call("execute_altering", { displayName: "가죽" });
+    expect(leatherOpen.calls.map(([c]) => c)).toContain("execute_altering");
+  });
+
+  it("대기열에 그 가공이 하나도 없으면 시설을 알 수 없어 막지 않는다", async () => {
+    const connector = queueConnector(recordedWorks);
+    await new Tools(connector, 10).call("execute_altering", { displayName: "실크" });
+    expect(connector.calls.map(([c]) => c)).toContain("execute_altering");
+  });
+
+  it("count로 되풀이하다 칸이 차면 거기서 멈추고 차고 난 뒤의 등록은 부르지 않는다", async () => {
+    const { connector, tools } = await workshopTools({ "철 광석": 100 }, 100);
+    await tools.call("execute_altering", { ...ironIngot, count: 3 });
+    expect(await tools.call("execute_altering", { ...ironIngot, count: 7 })).toMatchObject({ registered: 4, requested: 7, last: { error: "queue_full" } });
+    expect(connector.calls.filter(([c]) => c === "execute_altering")).toHaveLength(7);
+    expect(tools.wings).toBe(65);
+  });
+
+  it("칸이 차 거절된 뒤 완료분을 수령하면 조회 없이 다시 등록할 수 있다", async () => {
+    vi.useFakeTimers();
+    const { tools } = await workshopTools({ "철 광석": 100 }, 100);
+    await tools.call("execute_altering", { ...ironIngot, count: 7 });
+    await vi.advanceTimersByTimeAsync(7 * 30_000);
+    expect(await tools.call("execute_altering", ironIngot)).toMatchObject({ last: { error: "queue_full" } });
+    expect(await tools.call("complete_altering_work", ironIngot)).toMatchObject({ collected: 7 });
+    expect(await tools.call("execute_altering", ironIngot)).toMatchObject({ registered: 1, last: { result: "started" } });
+  });
+
+  it("대기열 조회가 거부되면 등록을 부르지 않고 그 거부를 돌려준다", async () => {
+    const connector = queueConnector({ pipe: "disconnected" });
+    const tools = new Tools(connector, 10);
+    expect(await tools.call("execute_altering", ironIngot)).toMatchObject({ registered: 0, last: { pipe: "disconnected" } });
+    expect(connector.calls.map(([c]) => c)).not.toContain("execute_altering");
+    expect(tools.wings).toBe(10);
+  });
+});
+
 describe("가공 완료 기다리기", () => {
   it("그 가공의 등록분이 모두 끝날 때까지 남은 시간과 진행 간격 중 짧은 쪽만큼 자고 다시 보며, completed와 마지막 작업 목록을 돌려준다", async () => {
     vi.useFakeTimers();
     const { connector, tools } = await workshopTools({ "철 광석": 20 }, 20);
     await tools.call("execute_altering", { ...ironIngot, count: 2 });
+    connector.calls = [];
     let result: Json | undefined;
     void tools.call("wait_altering", ironIngot).then((r) => (result = r));
     await vi.advanceTimersByTimeAsync(59_000);
@@ -547,6 +627,7 @@ describe("가공 완료 기다리기", () => {
     vi.useFakeTimers();
     const { connector, tools } = await workshopTools({ "철 광석": 20 }, 20);
     await tools.call("execute_altering", ironIngot);
+    connector.calls = [];
     const waiting = tools.call("wait_altering", ironIngot);
     await vi.advanceTimersByTimeAsync(0);
     expect(await tools.cancel()).toBeUndefined();
