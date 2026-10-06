@@ -12,9 +12,10 @@ export type Shape =
 
 export type ToolSpec = Shape & {
   name: string;
-  kind: "query" | "execute";
+  kind: "query" | "execute" | "wait";
   wings: 0 | 5;
   description: string;
+  repeat?: Param;
 };
 
 const none: Shape = { body: "none", params: [] };
@@ -74,6 +75,13 @@ export const catalog = [
   query("get_alterable_items", "지금 가공 등록할 수 있는 것", raw("가공물")),
   query("get_altering_works", "등록한 가공의 남은 시간과 완료 여부"),
   query("get_craftable_items", "지금 제작할 수 있는 것", raw("제작물")),
+  {
+    name: "wait_altering",
+    kind: "wait",
+    wings: 0,
+    description: "그 가공의 등록분이 모두 완료될 때까지 기다린다. 결과는 completed와 마지막 get_altering_works. 기다리는 동안 캐릭터는 다른 활동을 할 수 있다",
+    ...json(displayName("get_altering_works")),
+  },
   execute(
     "play_music_score",
     0,
@@ -89,7 +97,15 @@ export const catalog = [
   execute("stop_action", 0, "진행 중인 행동 중단. 연주 · 채집 · 자동 낚시 · 운반"),
   execute("stand_up", 0, "앉기에서 일어나기"),
   execute("execute_gathering", 5, "이름의 것을 최대 100개 채집. 낚시 전용이면 자동 낚시 시작", json(displayName("get_gatherable_items"))),
-  execute("execute_altering", 5, "가공 하나를 시설에 등록. 결과는 get_altering_works로 확인", json(displayName("get_alterable_items"))),
+  {
+    ...execute(
+      "execute_altering",
+      5,
+      "가공을 시설에 count번 등록. 등록마다 날개 5개. 거부되면 거기서 멈춘다. 결과는 registered와 마지막 응답 last. 완료는 wait_altering으로 기다린다",
+      json(displayName("get_alterable_items")),
+    ),
+    repeat: { name: "count", type: "number", required: false, description: "등록 횟수. 기본 1, 최대 7" },
+  },
   execute("complete_altering_work", 0, "그 시설의 완료된 가공을 전부 수령", json(displayName("get_altering_works"))),
   execute(
     "execute_crafting",

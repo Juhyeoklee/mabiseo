@@ -1,5 +1,5 @@
 import type { Connector, Json } from "../connector/connector.js";
-import { Jobs, type Listener } from "../jobs/jobs.js";
+import { Jobs, type Listener, type Progress } from "../jobs/jobs.js";
 import { afterStartRejections, freeRejections, spec, type ToolName, type ToolSpec } from "./catalog.js";
 
 export type ToolInput = Readonly<Record<string, string | number | undefined>>;
@@ -12,12 +12,19 @@ const executeTimeoutMs = 30 * 60_000;
 
 const progressIntervalMs = 20_000;
 
+// 시설마다 7칸이고 수령 안 한 완료 건도 칸을 차지한다. 가득 찬 등록은 막히고도 날개 5가 빠진다(recordings/queue-full/)
+const queueSlots = 7;
+
+const waitTimeoutMs = 60 * 60_000;
+
 // 시작 전 거부는 0.1초 안에, 게임이 꺼져 있어도 약 5초 안에 돌아온다(recordings/reviving/index.tsv · recordings/game-off/index.tsv)
 const quickRefusalMs = 10_000;
 
 export class Tools {
   private rejected = new Set<string>();
   private readonly jobs: Jobs;
+  private readonly listeners = new Set<Listener>();
+  private readonly waits = new Set<AbortController>();
 
   constructor(
     private readonly connector: Connector,
@@ -36,10 +43,16 @@ export class Tools {
   }
 
   watch(listener: Listener): () => void {
-    return this.jobs.watch(listener);
+    const unwatch = this.jobs.watch(listener);
+    this.listeners.add(listener);
+    return () => {
+      unwatch();
+      this.listeners.delete(listener);
+    };
   }
 
   async cancel(): Promise<Json | undefined> {
+    for (const wait of this.waits) wait.abort();
     if (!this.jobs.current) return undefined;
     return this.call("stop_action");
   }
@@ -49,6 +62,8 @@ export class Tools {
     const missing = tool.params.find((p) => p.required && input[p.name] === undefined);
     if (missing) return { error: "missing_param", message: `${name}에는 ${missing.name}이 필요하다` };
 
+    if (tool.kind === "wait") return this.waitAltering(String(input.displayName));
+
     const body = encode(tool, input);
     const key = body ? `${name} ${body}` : name;
     if (tool.kind === "query") {
@@ -56,7 +71,23 @@ export class Tools {
       this.rejected.clear();
       return response;
     }
+    if (!tool.repeat) return this.execute(name, tool, body, key);
 
+    const times = input[tool.repeat.name] ?? 1;
+    if (typeof times !== "number" || !Number.isInteger(times) || times < 1 || times > queueSlots) {
+      return { error: "invalid_count", message: `${tool.repeat.name}는 1부터 ${queueSlots}까지의 정수다` };
+    }
+    let registered = 0;
+    let last: Json = null;
+    while (registered < times) {
+      last = await this.execute(name, tool, body, key);
+      if (isRefused(last)) break;
+      registered += 1;
+    }
+    return { registered, requested: times, last };
+  }
+
+  private async execute(name: ToolName, tool: ToolSpec, body: string | undefined, key: string): Promise<Json> {
     const current = this.jobs.current;
     if (current && name !== "stop_action") {
       return { error: "busy", message: `${current.name}이 끝나기 전에는 다른 맡기기를 부르지 않는다. 새 활동이 앞 활동을 취소한다` };
@@ -84,6 +115,29 @@ export class Tools {
     }
     if (isRefused(response)) this.rejected.add(key);
     return response;
+  }
+
+  // 가공 대기열은 캐릭터의 활동이 아니다. jobs로 붙들면 기다리는 동안의 채집이 busy로 막힌다
+  private async waitAltering(displayName: string): Promise<Json> {
+    const startedAt = Date.now();
+    const waiting = new AbortController();
+    this.waits.add(waiting);
+    try {
+      for (;;) {
+        const works = await this.connector.run("get_altering_works", undefined, queryTimeoutMs);
+        this.rejected.clear();
+        if (isRefused(works)) return works;
+        const remaining = remainingSeconds(works, displayName);
+        if (remaining === undefined) return { completed: true, works };
+        const elapsedMs = Date.now() - startedAt;
+        if (elapsedMs >= waitTimeoutMs || waiting.signal.aborted) return { completed: false, works };
+        const progress: Progress = { activity: "wait_altering", elapsedSeconds: Math.round(elapsedMs / 1000) };
+        for (const listener of [...this.listeners]) listener(progress);
+        await sleep(Math.min(Math.max(remaining * 1000, 1000), progressIntervalMs, waitTimeoutMs - elapsedMs), waiting.signal);
+      }
+    } finally {
+      this.waits.delete(waiting);
+    }
   }
 
   // blocked처럼 시작 전과 후 양쪽에 나오는 거부는 코드만으로 못 가른다(recordings/reviving/execute_gathering.json은 시작 전 거부였다).
@@ -117,6 +171,29 @@ function statedCost(response: Json): number | undefined {
   const cost = field(response, "cost");
   const match = typeof cost === "string" ? statedCostPattern.exec(cost) : null;
   return match?.[1] === undefined ? undefined : Number(match[1]);
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+    function done(): void {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+  });
+}
+
+function remainingSeconds(works: Json, displayName: string): number | undefined {
+  const list = field(works, "works");
+  if (!Array.isArray(list)) return undefined;
+  const pending = list.filter((w) => field(w, "DisplayName") === displayName && field(w, "IsCompleted") !== true);
+  if (!pending.length) return undefined;
+  return Math.max(...pending.map((w) => {
+    const seconds = field(w, "RemainingSeconds");
+    return typeof seconds === "number" ? seconds : 0;
+  }));
 }
 
 function encode(tool: ToolSpec, input: ToolInput): string | undefined {
