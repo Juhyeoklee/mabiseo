@@ -33,6 +33,7 @@ export async function ask(prompt: string, session: Session): Promise<void> {
     prompt,
     options: {
       systemPrompt,
+      model: "claude-sonnet-5-5",
       tools: [],
       mcpServers: { [serverName]: mcpServer(session.tools, session.approve) },
       allowedTools: [...allowedToolNames],
