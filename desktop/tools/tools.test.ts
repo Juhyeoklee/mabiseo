@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Connector, Json } from "../connector/connector.js";
 import { FakeConnector } from "../connector/fake.js";
 import { readJson } from "../connector/recordings.js";
+import { Workshop } from "../connector/workshop.js";
 import type { Progress } from "../jobs/jobs.js";
 import { Tools } from "./tools.js";
 
@@ -177,7 +178,7 @@ describe("날개 예산", () => {
   it("가공 대기열이 가득 차 막힌 실물 가공 등록 응답도 cost대로 5개를 깎는다", async () => {
     const blocked = await readJson(dir, "queue-full/execute_altering.json");
     const tools = new Tools(refusing(() => blocked, [100]), 10);
-    expect(await tools.call("execute_altering", { displayName: "철괴(철 광석)" })).toMatchObject({ error: "blocked", kind: "unknown_modal" });
+    expect(await tools.call("execute_altering", { displayName: "철괴(철 광석)" })).toMatchObject({ registered: 0, last: { error: "blocked", kind: "unknown_modal" } });
     expect(tools.wings).toBe(5);
   });
 
@@ -447,5 +448,126 @@ describe("게임의 거부는 예외가 아니라 도구 결과다", () => {
     const { tools, connector } = await fakeTools(10);
     expect(await tools.call("execute_gathering")).toMatchObject({ error: "missing_param" });
     expect(connector.calls).toEqual([]);
+  });
+});
+
+async function workshopTools(stock: Record<string, number>, wings: number) {
+  const connector = new Counting(new Workshop(await FakeConnector.fromDirectory(dir), stock, 100));
+  return { connector, tools: new Tools(connector, wings) };
+}
+
+const ironIngot = { displayName: "철괴(철 광석)" };
+
+describe("가공 등록은 count번 되풀이된다", () => {
+  it("count만큼 등록을 부르고 등록마다 날개 5개를 깎는다. count는 CLI 본문에 들어가지 않는다", async () => {
+    const { connector, tools } = await workshopTools({ "철 광석": 30 }, 20);
+    expect(await tools.call("execute_altering", { ...ironIngot, count: 3 })).toMatchObject({ registered: 3, requested: 3, last: { result: "started" } });
+    expect(tools.wings).toBe(5);
+    expect(connector.calls.filter(([c]) => c === "execute_altering")).toEqual(Array(3).fill(["execute_altering", '{"displayName":"철괴(철 광석)"}']));
+  });
+
+  it("count를 비우면 한 번 등록한다", async () => {
+    const { tools } = await workshopTools({ "철 광석": 30 }, 20);
+    expect(await tools.call("execute_altering", ironIngot)).toMatchObject({ registered: 1, requested: 1 });
+  });
+
+  it("중간에 거부되면 거기서 멈추고 등록된 수와 마지막 거부를 돌려준다", async () => {
+    const { connector, tools } = await workshopTools({ "철 광석": 20 }, 20);
+    expect(await tools.call("execute_altering", { ...ironIngot, count: 3 })).toMatchObject({
+      registered: 2,
+      requested: 3,
+      last: { error: "not_enough_ingredient" },
+    });
+    expect(tools.wings).toBe(10);
+    expect(executes(connector.calls.map(([c]) => c))).toHaveLength(3);
+  });
+
+  it("날개 예산이 중간에 바닥나면 커넥터를 더 부르지 않고 wings_budget에서 멈춘다", async () => {
+    const { connector, tools } = await workshopTools({ "철 광석": 30 }, 10);
+    expect(await tools.call("execute_altering", { ...ironIngot, count: 3 })).toMatchObject({ registered: 2, last: { error: "wings_budget" } });
+    expect(executes(connector.calls.map(([c]) => c))).toHaveLength(2);
+  });
+
+  it("count가 시설 대기열 7칸을 넘거나 1보다 작거나 정수가 아니면 커넥터를 부르지 않는다", async () => {
+    const { connector, tools } = await workshopTools({ "철 광석": 100 }, 100);
+    for (const count of [8, 0, 1.5]) {
+      expect(await tools.call("execute_altering", { ...ironIngot, count })).toMatchObject({ error: "invalid_count" });
+    }
+    expect(connector.calls).toEqual([]);
+  });
+});
+
+describe("가공 완료 기다리기", () => {
+  it("그 가공의 등록분이 모두 끝날 때까지 남은 시간만큼 자고 다시 보며, completed와 마지막 작업 목록을 돌려준다", async () => {
+    vi.useFakeTimers();
+    const { connector, tools } = await workshopTools({ "철 광석": 20 }, 20);
+    await tools.call("execute_altering", { ...ironIngot, count: 2 });
+    let result: Json | undefined;
+    void tools.call("wait_altering", ironIngot).then((r) => (result = r));
+    await vi.advanceTimersByTimeAsync(7_000);
+    expect(result).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(result).toMatchObject({ completed: true, works: { completedCount: 2 } });
+    expect(connector.calls.filter(([c]) => c === "get_altering_works")).toHaveLength(2);
+    expect(connector.calls.map(([c]) => c)).not.toContain("wait_altering");
+  });
+
+  it("기다리는 동안 진행이 watch로 흐른다", async () => {
+    vi.useFakeTimers();
+    const { tools } = await workshopTools({ "철 광석": 20 }, 20);
+    await tools.call("execute_altering", ironIngot);
+    const seen: Progress[] = [];
+    tools.watch((p) => seen.push(p));
+    const waiting = tools.call("wait_altering", ironIngot);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await waiting;
+    expect(seen[0]).toEqual({ activity: "wait_altering", elapsedSeconds: 0 });
+  });
+
+  it("기다리는 동안 채집은 busy로 막히지 않는다. 가공 대기열은 캐릭터의 활동이 아니다", async () => {
+    vi.useFakeTimers();
+    const { tools } = await workshopTools({ "철 광석": 20 }, 20);
+    await tools.call("execute_altering", ironIngot);
+    const waiting = tools.call("wait_altering", ironIngot);
+    expect(await tools.call("execute_gathering", { displayName: "철 광석" })).toMatchObject({ result: "completed" });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await waiting;
+  });
+
+  it("1시간을 넘게 안 끝나면 completed: false와 남은 상태를 돌려준다", async () => {
+    vi.useFakeTimers();
+    const pending: Json = { completedCount: 0, works: [{ DisplayName: "강철괴", IsCompleted: false, RemainingSeconds: 99_999 }] };
+    const tools = new Tools({ run: async () => pending }, 10);
+    const waiting = tools.call("wait_altering", { displayName: "강철괴" });
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(await waiting).toEqual({ completed: false, works: pending });
+  });
+
+  it("cancel은 진행 중인 기다림을 끊고, 끊긴 기다림은 completed: false를 돌려준다", async () => {
+    vi.useFakeTimers();
+    const { connector, tools } = await workshopTools({ "철 광석": 20 }, 20);
+    await tools.call("execute_altering", ironIngot);
+    const waiting = tools.call("wait_altering", ironIngot);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await tools.cancel()).toBeUndefined();
+    expect(await waiting).toMatchObject({ completed: false });
+    expect(connector.calls.filter(([c]) => c === "get_altering_works")).toHaveLength(2);
+  });
+
+  it("겹친 기다림도 cancel이 모두 끊는다", async () => {
+    vi.useFakeTimers();
+    const { tools } = await workshopTools({ "철 광석": 20 }, 20);
+    await tools.call("execute_altering", { ...ironIngot, count: 2 });
+    const first = tools.call("wait_altering", ironIngot);
+    const second = tools.call("wait_altering", ironIngot);
+    await vi.advanceTimersByTimeAsync(0);
+    await tools.cancel();
+    expect(await Promise.all([first, second])).toMatchObject([{ completed: false }, { completed: false }]);
+  });
+
+  it("작업 목록 조회가 거부되면 기다리지 않고 그 거부를 돌려준다", async () => {
+    const gameOff = await readJson(dir, "game-off/get_my_info.json");
+    const tools = new Tools({ run: async () => gameOff }, 10);
+    expect(await tools.call("wait_altering", ironIngot)).toMatchObject({ pipe: "disconnected" });
   });
 });

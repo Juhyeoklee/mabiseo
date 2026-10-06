@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { catalog } from "./catalog.js";
 
 describe("도구 목록", () => {
-  it("조회 19개와 맡기기 8개다", () => {
+  it("조회 19개와 맡기기 8개에 CLI 명령이 아닌 가공 기다리기 1개다", () => {
     expect(catalog.filter((t) => t.kind === "query")).toHaveLength(19);
     expect(catalog.filter((t) => t.kind === "execute")).toHaveLength(8);
+    expect(catalog.filter((t) => t.kind === "wait").map((t) => t.name)).toEqual(["wait_altering"]);
   });
 
   it("채팅은 도구가 아니다. 승인 없이 즉시 전송되기 때문이다", () => {
@@ -20,8 +21,8 @@ describe("도구 목록", () => {
     ]);
   });
 
-  it("조회 도구는 날개를 쓰지 않는다", () => {
-    expect(catalog.filter((t) => t.kind === "query").every((t) => t.wings === 0)).toBe(true);
+  it("조회와 기다리기 도구는 날개를 쓰지 않는다", () => {
+    expect(catalog.filter((t) => t.kind !== "execute").every((t) => t.wings === 0)).toBe(true);
   });
 
   it("이름이 겹치지 않는다", () => {

@@ -69,7 +69,7 @@ const echoAsk: Ask = async (prompt, session) => {
 
 const gatheringAsk: Ask = async (_prompt, session) => {
   session.onEvent({ kind: "started", model: "fake" });
-  const allowed = await session.approve("execute_gathering", { displayName: "새록 버섯", count: 100 });
+  const allowed = await session.approve("execute_gathering", { displayName: "새록 버섯", count: 100 }, 5);
   session.onEvent({ kind: "done", text: allowed ? "채집을 시작했다." : "승인되지 않았다.", turns: 1, costUsd: 0 });
 };
 
@@ -356,7 +356,7 @@ describe("승인", () => {
     let answer: Promise<boolean> | undefined;
     const ask: Ask = async (_prompt, session) => {
       const input = { displayName: "새록 버섯", count: 100 };
-      answer = session.approve("execute_gathering", input);
+      answer = session.approve("execute_gathering", input, 5);
       if (await answer) await session.tools.call("execute_gathering", input);
       session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
     };
@@ -407,7 +407,7 @@ describe("승인", () => {
     const release = gate();
     const ask: Ask = async (_prompt, session) => {
       session.onEvent({ kind: "started", model: "fake" });
-      const allowed = await session.approve("execute_gathering", { displayName: "새록 버섯", count: 100 });
+      const allowed = await session.approve("execute_gathering", { displayName: "새록 버섯", count: 100 }, 5);
       session.onEvent({ kind: "text", text: allowed ? "승인됨" : "거부됨" });
       await release.wait;
       session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });

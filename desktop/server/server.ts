@@ -3,7 +3,6 @@ import { WebSocket, WebSocketServer } from "ws";
 import { agentEvent, desktopMessage, phoneMessage, type ConnectorState, type DesktopMessage, type PhoneMessage } from "../../protocol/messages.js";
 import type { ask as hostAsk, AgentEvent } from "../agent/host.js";
 import type { Json } from "../connector/connector.js";
-import { spec, type ToolName } from "../tools/catalog.js";
 import type { ToolInput, Tools } from "../tools/tools.js";
 
 export type Ask = typeof hostAsk;
@@ -165,7 +164,7 @@ export class Server {
       if (!run.abort.signal.aborted) {
         await this.options.ask(text, {
           tools: this.options.tools,
-          approve: (name, input) => this.approve(run, name, input),
+          approve: (name, input, wings) => this.approve(run, name, input, wings),
           onEvent: emit,
           abort: run.abort,
         });
@@ -182,10 +181,10 @@ export class Server {
     this.broadcast(status);
   }
 
-  private approve(run: Run, name: ToolName, input: ToolInput): Promise<boolean> {
+  private approve(run: Run, name: string, input: ToolInput, wings: number): Promise<boolean> {
     if (run.abort.signal.aborted) return Promise.resolve(false);
     const id = randomUUID();
-    const request: ApprovalRequest = { type: "approval_request", id, askId: run.id, tool: name, input: definedFields(input), wings: spec(name).wings };
+    const request: ApprovalRequest = { type: "approval_request", id, askId: run.id, tool: name, input: definedFields(input), wings };
     return new Promise((resolve) => {
       this.approvals.set(id, {
         run,
