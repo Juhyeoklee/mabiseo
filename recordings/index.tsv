@@ -26,3 +26,8 @@ stand_up.standing.json	0	109	50	stand_up
 stop_action.idle.json	0	72	85	stop_action	
 execute_gathering.unknown-name.json	0	86	106	execute_gathering	{"displayName":"마비서없는아이템"}
 write_chat.json	0	124	39	write_chat	마비서 테스트
+execute_altering.started.json	0	7216	197	execute_altering	{"displayName":"철괴(철 광석)"}
+execute_altering.ingredient-locked.json	0	83	176	execute_altering	{"displayName":"강철괴"}
+get_alterable_items.ingredient-locked.json	0	96	399	get_alterable_items	강철괴
+complete_altering_work.json	0	6043	164	complete_altering_work	{"displayName":"철괴(철 광석)"}
+complete_altering_work.critical.json	0	6104	227	complete_altering_work	{"displayName":"강철괴"}

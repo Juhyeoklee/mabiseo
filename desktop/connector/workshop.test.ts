@@ -66,22 +66,22 @@ describe("가짜 작업장은 재료 · 대기열 · 날개를 기억한다", ()
     expect(await run("get_altering_works")).toEqual({
       completedCount: 0,
       works: [
-        { DisplayName: "철괴(철 광석)", FacilityName: "금속 가공 시설", State: "InProgress", IsCompleted: false, RemainingSeconds: 4 },
-        { DisplayName: "철괴(철 광석)", FacilityName: "금속 가공 시설", State: "NotStarted", IsCompleted: false, RemainingSeconds: 8 },
+        { DisplayName: "철괴(철 광석)", FacilityName: "금속 가공 시설", State: "InProgress", IsCompleted: false, RemainingSeconds: 30 },
+        { DisplayName: "철괴(철 광석)", FacilityName: "금속 가공 시설", State: "NotStarted", IsCompleted: false, RemainingSeconds: 60 },
       ],
     });
-    clock.now = 4_000;
-    expect(await run("get_altering_works")).toMatchObject({ completedCount: 1, works: [{ State: "Completed" }, { State: "InProgress", RemainingSeconds: 4 }] });
+    clock.now = 30_000;
+    expect(await run("get_altering_works")).toMatchObject({ completedCount: 1, works: [{ State: "Completed" }, { State: "InProgress", RemainingSeconds: 30 }] });
   });
 
   it("그 가공이 아직 진행 중이면 수령은 not_completed_yet이고, 다 끝나면 시설의 완료분을 모두 받아 가진 수에 더한다", async () => {
     const { clock, run } = await workshop({ "철 광석": 20 });
     await run("execute_altering", ironIngot);
     await run("execute_altering", ironIngot);
-    clock.now = 4_000;
+    clock.now = 30_000;
     expect(await run("complete_altering_work", ironIngot)).toMatchObject({ error: "not_completed_yet" });
-    clock.now = 8_000;
-    expect(await run("complete_altering_work", ironIngot)).toMatchObject({ collected: 2, rewards: [{ DisplayName: "철괴", Count: 6 }] });
+    clock.now = 60_000;
+    expect(await run("complete_altering_work", ironIngot)).toMatchObject({ collected: 2, rewards: [{ Name: "철괴", Amount: 6 }] });
     expect(await run("get_altering_works")).toEqual({ completedCount: 0, works: [] });
     expect(await run("get_alterable_items", "강철괴")).toEqual({ items: [{ DisplayName: "강철괴", Alterable: true, ProducedPerWork: 3 }] });
   });
@@ -89,9 +89,17 @@ describe("가짜 작업장은 재료 · 대기열 · 날개를 기억한다", ()
   it("수령하지 않은 완료분도 칸을 차지해 7칸이 차면 등록이 막히고도 날개 5개가 빠진다", async () => {
     const { clock, run } = await workshop({ "철 광석": 80 });
     for (let i = 0; i < 7; i += 1) await run("execute_altering", ironIngot);
-    clock.now = 60_000;
+    clock.now = 210_000;
     const recorded = (await readJson(dir, "queue-full/execute_altering.json")) as Record<string, Json>;
     expect(await run("execute_altering", ironIngot)).toEqual({ ...recorded, cost: "정령의 날개 5 spent, 60 left." });
+  });
+
+  it("등록 성공과 수령은 녹화와 같은 모양으로 답하고, 등록의 cost만 작업장의 날개를 따른다", async () => {
+    const { clock, run } = await workshop({ "철 광석": 10 });
+    const started = (await readJson(dir, "execute_altering.started.json")) as Record<string, Json>;
+    expect(await run("execute_altering", ironIngot)).toEqual({ ...started, cost: "정령의 날개 5 spent, 95 left." });
+    clock.now = 30_000;
+    expect(await run("complete_altering_work", ironIngot)).toEqual(await readJson(dir, "complete_altering_work.json"));
   });
 
   it("작업장이 다루지 않는 명령은 녹화를 그대로 돌려준다", async () => {

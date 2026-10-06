@@ -1,0 +1,5 @@
+{
+  "result": "started",
+  "message": "Altering work queued. Check completion with get_altering_works and collect with complete_altering_work.",
+  "cost": "정령의 날개 5 spent, 85584 left."
+}

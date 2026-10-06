@@ -1,0 +1,4 @@
+{
+  "error": "ingredient_locked",
+  "message": "Altering requirements are not met; the error field says which. Check Reason and MissingIngredients with get_alterable_items."
+}

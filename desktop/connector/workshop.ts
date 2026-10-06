@@ -15,11 +15,11 @@ interface Work {
   doneAt: number;
 }
 
-// 강철괴의 재료 · 산출 · 시설은 recordings/get_alterable_items.json · get_altering_works.json대로다.
-// 철괴(철 광석)의 철 광석 수와 가공 시간은 녹화가 없어 지어낸 값이다
+// 재료 · 산출은 recordings/get_alterable_items.json · complete_altering_work.json대로다. 철 광석 수와 가공 시간은
+// 녹화 판에서 등록 전후 가진 수의 차이와 등록 직후의 RemainingSeconds로 쟀다
 const recipes: readonly Recipe[] = [
-  { name: "철괴(철 광석)", item: "철괴", facility: "금속 가공 시설", ingredient: "철 광석", required: 10, produced: 3, seconds: 4 },
-  { name: "강철괴", item: "강철괴", facility: "금속 가공 시설", ingredient: "철괴", required: 3, produced: 3, seconds: 6 },
+  { name: "철괴(철 광석)", item: "철괴", facility: "금속 가공 시설", ingredient: "철 광석", required: 10, produced: 3, seconds: 30 },
+  { name: "강철괴", item: "강철괴", facility: "금속 가공 시설", ingredient: "철괴", required: 3, produced: 3, seconds: 300 },
 ];
 
 const queueSlots = 7;
@@ -27,7 +27,6 @@ const wingsPerCall = 5;
 const gatherTarget = 100;
 const wingsName = "정령의 날개";
 
-// 등록 성공과 수령 응답은 녹화가 없어 recordings/capabilities.json의 OutputExample대로 지었다
 export class Workshop implements Connector {
   private readonly stock: Map<string, number>;
   private works: Work[] = [];
@@ -122,7 +121,11 @@ export class Workshop implements Connector {
     this.add(recipe.ingredient, -recipe.required);
     const startAt = Math.max(this.now(), ...queued.map((w) => w.doneAt));
     this.works.push({ recipe, doneAt: startAt + recipe.seconds * 1000 });
-    return { result: "started", message: "Altering work queued.", cost: this.pay() };
+    return {
+      result: "started",
+      message: "Altering work queued. Check completion with get_altering_works and collect with complete_altering_work.",
+      cost: this.pay(),
+    };
   }
 
   private queue(): Json {
@@ -157,9 +160,9 @@ export class Workshop implements Connector {
     for (const [item, count] of rewards) this.add(item, count);
     return {
       collected: done.length,
-      rewards: [...rewards].map(([item, count]) => ({ DisplayName: item, Count: count })),
+      rewards: [...rewards].map(([item, count]) => ({ Name: item, Amount: count })),
       criticalRewards: [],
-      message: "Collected all completed altering works at the facility.",
+      message: `Collected ${done.length} altering works.`,
     };
   }
 
