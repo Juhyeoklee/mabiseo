@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -82,9 +83,9 @@ describe("--fail=login: 캐릭터 선택 화면", () => {
     expect(await fake.run("execute_gathering", unknownItem)).toEqual(rejected);
   });
 
-  it("그 상황에 녹화가 없는 명령은 지어내지 않고 not_recorded다", async () => {
+  it("그 상황에 녹화가 없는 명령도 not_in_game으로 거부된다", async () => {
     const fake = await FakeConnector.fromDirectory(dir, "login");
-    expect(await fake.run("get_items")).toMatchObject({ error: "not_recorded" });
+    expect(await fake.run("get_activity")).toEqual({ error: "not_in_game", message: expect.any(String) });
   });
 });
 
@@ -102,8 +103,18 @@ describe("--fail=offline: 게임 꺼짐", () => {
     expect(await fake.run("execute_gathering", unknownItem)).toEqual(disconnected);
   });
 
-  it("그 상황에 녹화가 없는 명령은 지어내지 않고 not_recorded다", async () => {
+  it("그 상황에 녹화가 없는 명령도 같은 끊김 값을 돌려준다", async () => {
     const fake = await FakeConnector.fromDirectory(dir, "offline");
-    expect(await fake.run("get_items")).toMatchObject({ error: "not_recorded" });
+    expect(await fake.run("get_activity")).toEqual({ pipe: "disconnected", reason: "game_off" });
+  });
+
+  it("상황 녹화의 응답이 서로 다르면 지어낼 값을 고를 수 없어 읽을 때 던진다", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mabiseo-"));
+    const offline = join(root, "game-off");
+    await mkdir(offline);
+    await writeFile(join(offline, "index.tsv"), "file\texit\tms\tbytes\tcommand\tbody\na.json\t5\t0\t0\tget_my_info\t\nb.json\t5\t0\t0\tstand_up\t\n");
+    await writeFile(join(offline, "a.json"), '{"pipe":"disconnected","reason":"game_off"}');
+    await writeFile(join(offline, "b.json"), '{"error":"not_in_game","message":""}');
+    await expect(FakeConnector.fromDirectory(root, "offline")).rejects.toThrow();
   });
 });
