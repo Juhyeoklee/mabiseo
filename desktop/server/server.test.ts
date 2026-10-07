@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { desktopMessage, type DesktopMessage, type PhoneMessage } from "../../protocol/messages.js";
-import type { AgentEvent, Session } from "../agent/host.js";
+import type { AgentEvent, Session } from "../agent/agent.js";
 import type { Connector, Json } from "../connector/connector.js";
 import { FakeConnector } from "../connector/fake.js";
 import { readJson } from "../connector/recordings.js";

@@ -14,9 +14,9 @@
 | 요청 | 자연어 — 데스크탑의 에이전트가 해석·실행 |
 | 범위 | 집 안(같은 와이파이)만. 데스크탑이 곧 서버 |
 | 모바일 | iOS 네이티브 (SwiftUI) |
-| 데스크탑 | Windows (게임·커넥터 옆). Electron + Claude Agent SDK (TS). D1 상태 창은 Electron 창(판정 2026-10-05) |
+| 데스크탑 | Windows (게임·커넥터 옆). Electron + TS. D1 상태 창은 Electron 창(판정 2026-10-05) |
 | 개발 | 맥에서 개발, Windows는 실행만 |
-| 에이전트 | Claude Agent SDK(TS). 도구는 `tools/` 카탈로그를 in-process MCP 서버로 노출. 개발 단계 인증은 개발자의 API 키(환경 변수 · 판정 2026-09-29). 최종 사용자의 인증 방식은 열린 것(§5). 모델은 `claude-sonnet-5-5`로 고정. 가짜 시나리오 넷에서 Opus 5.5와 같이 다 해내고 API 비용이 약 35% 적다. Haiku 4.5는 조회 도구를 잘못 골라 둘을 놓쳤다(판정 2026-10-06) |
+| 에이전트 | 공급자별 구현 둘이 같은 도구 층(`agent/handlers.ts` · 승인 · 계획 · 입력 검증)을 쓴다. 기본은 **OpenAI**: Sign in with ChatGPT(Plus·Pro)로 PC에서 로그인(D1 버튼 · 루프백)하고, 원시 Responses 스트림 루프로 돈다. 한 응답의 여러 호출은 차례로 실행한다. 모델은 `gpt-5.6-luna`로 고정(판정 2026-10-07 · #28). 두 번째는 **Claude**(`--provider=claude`): Claude Agent SDK에 도구를 in-process MCP 서버로 노출하고, 인증은 API 키 환경 변수. 모델은 `claude-sonnet-5-5`로 고정. 가짜 시나리오 넷에서 Opus 5.5와 같이 다 해내고 API 비용이 약 35% 적다. Haiku 4.5는 조회 도구를 잘못 골라 둘을 놓쳤다(판정 2026-10-06) |
 | 중단 | 폰의 cancel은 에이전트를 끊고 붙든 활동에 stop_action을 보낸다. 소켓 끊김은 아무것도 끊지 않는다. 진행 중인 요청은 PC가 붙들고, 다시 페어링한 폰에 그 요청(끝났으면 마지막 요청)의 이벤트를 seq와 함께 처음부터 다시 보내고 승인 대기도 다시 묻는다. 날개를 이미 쓴 활동을 앱 백그라운드로 버리지 않는다(판정 2026-09-30 · 2026-10-03) |
 
 **외부 제약** — 넥슨 공지 [AI 커넥터 사전 안내](https://mabinogimobile.nexon.com/News/Notice/3541579) (2026-09-09 · Beta)
@@ -68,13 +68,14 @@ mabiseo/
 
 - 토글의 「자동 등록」이 무엇인가 — 우리는 CLI를 직접 부르므로 **몰라도 막히지 않는다.** 공식 등록분과 겹치면 한쪽만 쓴다 → **M0**
 - 1시간 팝업을 감지할 수 있는가 — 실측에서 아직 못 만났다. 만나도 다른 게임 창과 같은 `blocked` · `unknown_modal`일 수 있다 → #6
-- 사용자 인증 방식 — 기본은 OpenAI Sign in with ChatGPT(Plus·Pro), Claude(API 키)는 두 번째 구현(판정 2026-10-07 · #11). 구현은 #28. 실측(2026-10-07 · #27 · Mac 가짜):
+- 사용자 인증 방식 — 정해졌다(§2 에이전트 · #11 · #28). 남는 것은 OpenAI 모델이 다단계 작업(③)에서 모자란 재료를 채집으로 메우지 못하는 것. 실측(2026-10-07 · #27 · Mac 가짜):
   - 경로: 오픈소스·로컬 앱용 셀프 등록. `auth.openai.com/api/accounts/authorize`에 `client_id=dynamic_agent_client` · PKCE · 루프백 `http://127.0.0.1:<포트>/callback`으로 로그인하면 `oaiapp_…` client_id가 발급된다. 액세스 토큰은 1시간, 갱신 토큰은 30일. 추론은 `api.openai.com/v1/responses`. Codex CLI 로그인 토큰은 scope가 `api.connectors.*`뿐이라 401(`api.responses.write` 없음)로 빌려 쓸 수 없다
   - 요청: `store:false` · `stream:true`가 없으면 400. `additional_tools`는 400. `previous_response_id`가 없으니 출력 항목과 `function_call_output`을 입력에 쌓아 다시 보낸다. 응답은 lite라 `response.completed`의 `output`이 비고, 항목은 `response.output_item.done`으로만 온다
   - 최상위 `function` 도구를 그대로 받는다. `namespace`로 감싸도 된다. 카탈로그 29개와 `propose_plan`을 strict 없이 넣어 돌았다
   - 병렬 도구 호출이 된다. `parallel_tool_calls:false`면 지킨다
   - Agents SDK(JS 0.19)는 금지 필드를 보내지 않는다. `modelSettings.store=false`와 스트림 실행이 필요하고, 빈 `completed.output`을 `output_item.done`으로 채우는 fetch 심이 없으면 도구 호출을 못 보고 같은 요청을 maxTurns까지 되풀이한다
   - 가짜 시나리오 넷(`gpt-6-astra` · 추론 기본 low). ① 날개 조회 `get_currencies` 성공 ② 통나무 채집(`--workshop`) 조회 둘 병렬 → `execute_gathering` 성공 ③ 강철괴 9개(`--workshop --wings=50`) 1/2. 조회 대여섯을 병렬로 부르고 광석이 모자란 채로 철괴 등록부터 한다. 성공한 판은 채집을 넣은 계획을 다시 승인받아 22회 응답 · 날개 35 · 18분, 실패한 판은 철괴 1회 수령 뒤 사용자에게 넘겼다 ④ 게임 꺼짐(`--fail=offline`) `get_my_info` 성공. Sonnet 5.5(#25)는 ①②④가 같고 ③은 채집부터 곧게 갔다
+  - 모델 판정(#28 · 구현의 루프로 한 판씩). ①②④는 `gpt-6-astra` · `gpt-5.6-terra` · `gpt-5.6-luna` 모두 성공. ③은 셋 다 채집을 넣지 않아 실패했다. astra는 철괴 1회 등록 뒤 멈췄고(탐침 포함 1/3), terra는 강철괴 3개까지 갔고, luna는 계획 없이 글로 되묻고 멈췄다. 사용자가 luna를 골랐다
 - Windows 실행 방식 — 개발 중엔 `git pull` + 실행, 패키징은 나중
 - 승인 경계 — **기본안: 물어보기는 바로, 맡기기(날개 소모)는 폰에서 승인.** 일정량 이하는 묻지 않을지는 써보고 정한다
 - 제3자 래퍼 앱에 대한 정책 — 공지에 언급 없음. FAQ가 나오면 확인

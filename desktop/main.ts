@@ -1,18 +1,20 @@
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { ask, type AgentEvent } from "./agent/host.js";
+import type { AgentEvent } from "./agent/agent.js";
+import { providerFlags, selectAgent, type Provider } from "./agent/select.js";
 import type { FailMode } from "./connector/connector.js";
 import { chooseConnector, selectConnector, type ConnectorChoice } from "./connector/select.js";
 import { Tools } from "./tools/tools.js";
 
 const recordings = fileURLToPath(new URL("../recordings/", import.meta.url));
-const usage = '사용법: npm run ask -- [--fail=login|offline | --workshop | --real] [--wings=N] "할 일"';
+const usage = '사용법: npm run ask -- [--provider=openai|claude] [--fail=login|offline | --workshop | --real] [--wings=N] "할 일"';
 const failFlags: Readonly<Record<string, FailMode>> = { "--fail=login": "login", "--fail=offline": "offline" };
 
 interface Args {
   prompt: string;
   connector: ConnectorChoice;
   wings: number;
+  provider: Provider;
 }
 
 function parseArgs(argv: string[]): Args | undefined {
@@ -20,10 +22,12 @@ function parseArgs(argv: string[]): Args | undefined {
   let real = false;
   let workshop = false;
   let wings = 10;
+  let provider: Provider = "openai";
   const words: string[] = [];
   for (const arg of argv) {
     const mode = failFlags[arg];
     if (mode) fail = mode;
+    else if (providerFlags[arg]) provider = providerFlags[arg];
     else if (arg === "--real") real = true;
     else if (arg === "--workshop") workshop = true;
     else if (arg.startsWith("--wings=")) wings = Number(arg.slice("--wings=".length));
@@ -32,7 +36,7 @@ function parseArgs(argv: string[]): Args | undefined {
   }
   const connector = chooseConnector({ real, workshop, fail });
   if (!words.length || !Number.isInteger(wings) || wings < 0 || !connector) return undefined;
-  return { prompt: words.join(" "), connector, wings };
+  return { prompt: words.join(" "), connector, wings, provider };
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -42,12 +46,12 @@ async function main(argv: string[]): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  const { prompt, connector, wings } = args;
+  const { prompt, connector, wings, provider } = args;
 
   const tools = new Tools(await selectConnector(connector, recordings), wings);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    await ask(prompt, {
+    await selectAgent(provider).ask(prompt, {
       tools,
       approve: async (name, input) => {
         try {

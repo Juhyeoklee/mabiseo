@@ -11,7 +11,29 @@ export interface Pairing {
   code: string;
 }
 
+export interface Account {
+  service: string;
+  state: { signedIn: true; account: string } | { signedIn: false };
+  signingIn: boolean;
+  canLogin: boolean;
+  canLogout: boolean;
+}
+
+export type Action = { kind: "login" | "logout"; label: string };
+
 const LOG_LIMIT = 200;
+
+export function accountRow(account: Account): Row {
+  if (account.signingIn) return { label: "AI", value: `${account.service} · 브라우저에서 로그인하는 중` };
+  return { label: "AI", value: `${account.service} · ${account.state.signedIn ? account.state.account : "로그인 필요"}` };
+}
+
+export function accountAction(account: Account): Action | undefined {
+  if (account.signingIn) return undefined;
+  if (!account.state.signedIn && account.canLogin) return { kind: "login", label: `${account.service} 로그인` };
+  if (account.state.signedIn && account.canLogout) return { kind: "logout", label: "로그아웃" };
+  return undefined;
+}
 
 export function rows(view: ServerView, pairing: Pairing): Row[] {
   return [

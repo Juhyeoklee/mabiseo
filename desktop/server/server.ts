@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 import { agentEvent, desktopMessage, phoneMessage, type ConnectorState, type DesktopMessage, type PhoneMessage } from "../../protocol/messages.js";
-import type { ask as hostAsk, AgentEvent } from "../agent/host.js";
+import type { Agent, AgentEvent } from "../agent/agent.js";
 import type { Json } from "../connector/connector.js";
 import type { ToolInput, Tools } from "../tools/tools.js";
 
-export type Ask = typeof hostAsk;
+export type Ask = Agent["ask"];
 
 export interface ServerView {
   connector: ConnectorState;
