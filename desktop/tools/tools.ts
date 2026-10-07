@@ -13,7 +13,7 @@ const executeTimeoutMs = 30 * 60_000;
 const progressIntervalMs = 20_000;
 
 // 시설마다 7칸이고 수령 안 한 완료 건도 칸을 차지한다. 가득 찬 등록은 막히고도 날개 5가 빠진다(recordings/queue-full/)
-const queueSlots = 7;
+export const queueSlots = 7;
 
 const waitTimeoutMs = 60 * 60_000;
 
@@ -230,7 +230,7 @@ function encode(tool: ToolSpec, input: ToolInput): string | undefined {
   return Object.keys(given).length ? JSON.stringify(given) : undefined;
 }
 
-function field(response: Json, name: string): Json | undefined {
+export function field(response: Json, name: string): Json | undefined {
   return typeof response === "object" && response !== null && !Array.isArray(response) ? response[name] : undefined;
 }
 

@@ -69,12 +69,12 @@ describe("OpenAI 구현은 Responses 스트림으로 도구를 돌린다", () =>
     ]);
   });
 
-  it("요청은 store:false · stream:true로 가고 카탈로그와 계획 도구 29개를 함수로 싣는다", async () => {
+  it("요청은 store:false · stream:true로 가고 카탈로그와 계획 도구 30개를 함수로 싣는다", async () => {
     const { sent } = await ask([sse([say("끝")])]);
     const body = sent[0]!.body;
     expect(body.store).toBe(false);
     expect(body.stream).toBe(true);
-    expect(body.tools).toHaveLength(29);
+    expect(body.tools).toHaveLength(30);
     expect(body.tools.find((t) => t["name"] === "execute_gathering")).toMatchObject({
       type: "function",
       parameters: { type: "object", required: ["displayName"], properties: { displayName: { type: "string" } } },

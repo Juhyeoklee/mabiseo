@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Connector, Json } from "../connector/connector.js";
 import { FakeConnector } from "../connector/fake.js";
 import { Workshop } from "../connector/workshop.js";
@@ -32,7 +32,8 @@ async function setup(decision: boolean, wings = 10, workshop = false) {
     requests.push({ tool, input, wings: cost });
     return decisions.next;
   };
-  const list = handlers(new Tools(connector, wings), approve);
+  const tools = new Tools(connector, wings);
+  const list = handlers(tools, approve);
   const call = async (name: string, input: unknown = {}) => {
     const found = list.find((h) => h.name === name);
     if (!found) throw new Error(name);
@@ -40,17 +41,17 @@ async function setup(decision: boolean, wings = 10, workshop = false) {
   };
   const propose = (steps: { tool: string; displayName: string; times: number }[]) => call("propose_plan", { steps });
   const asked = (): string[] => requests.map((r) => r.tool);
-  return { connector, asked, requests, list, call, propose, decisions };
+  return { connector, tools, asked, requests, list, call, propose, decisions };
 }
 
 describe("카탈로그가 공급자와 무관한 도구가 된다", () => {
-  it("조회 · 맡기기 도구 28개와 계획 도구가 겹치지 않는 이름과 빈 칸 없는 설명으로 나오고 계획 도구가 맨 뒤다", async () => {
+  it("조회 · 맡기기 도구 28개와 계획 도구 둘이 겹치지 않는 이름과 빈 칸 없는 설명으로 나오고 계획 도구가 맨 뒤다", async () => {
     const { list } = await setup(true);
     const names = list.map((h) => h.name);
-    expect(names).toHaveLength(29);
-    expect(new Set(names).size).toBe(29);
+    expect(names).toHaveLength(30);
+    expect(new Set(names).size).toBe(30);
     expect(names).toEqual(expect.arrayContaining(["get_currencies", "execute_gathering", "wait_altering"]));
-    expect(names.at(-1)).toBe("propose_plan");
+    expect(names.slice(-2)).toEqual(["propose_plan", "plan_production"]);
     expect(list.every((h) => h.description.length > 0)).toBe(true);
   });
 
@@ -177,5 +178,128 @@ describe("계획 승인", () => {
     const { requests, call } = await setup(false, 50, true);
     await call("execute_altering", { displayName: "철괴(철 광석)", count: 3 });
     expect(requests).toEqual([{ tool: "execute_altering", input: { displayName: "철괴(철 광석)", count: 3 }, wings: 15 }]);
+  });
+});
+
+describe("가공 계획을 세우고 단계별로 지시한다", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  interface Next {
+    tool: string;
+    input: Record<string, string | number>;
+  }
+
+  const produce = (call: (name: string, input?: unknown) => Promise<Json>) => call("plan_production", { item: "강철괴", count: 9 }) as Promise<Json & { next_step: Next }>;
+
+  async function follow(call: (name: string, input?: unknown) => Promise<Json>, first: Next) {
+    const called: Next[] = [];
+    let next: Next | null = first;
+    let last: Json = null;
+    while (next) {
+      called.push(next);
+      const pending = call(next.tool, next.input);
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      last = await pending;
+      next = (last as { next_step: Next | null }).next_step;
+    }
+    return { called, last };
+  }
+
+  it("가진 재료로 단계를 세어 날개 합계와 함께 한 번 승인받고 첫 단계를 next_step으로 준다", async () => {
+    const { requests, call } = await setup(true, 50, true);
+    expect(await produce(call)).toMatchObject({
+      approved: true,
+      wings: 30,
+      next_step: { tool: "execute_altering", input: { displayName: "철괴(철 광석)", count: 3 } },
+    });
+    expect(requests).toEqual([
+      {
+        tool: "propose_plan",
+        input: {
+          "execute_altering 철괴(철 광석)": 3,
+          "complete_altering_work 철괴(철 광석)": 1,
+          "execute_altering 강철괴": 3,
+          "complete_altering_work 강철괴": 1,
+        },
+        wings: 30,
+      },
+    ]);
+  });
+
+  it("next_step대로 부르면 다시 묻지 않고 강철괴까지 가고, 마지막 결과에 next_step null과 plan_done이 붙는다", async () => {
+    vi.useFakeTimers();
+    const { asked, call } = await setup(true, 50, true);
+    const { called, last } = await follow(call, (await produce(call)).next_step);
+    expect(called.map((n) => `${n.tool} ${n.input.displayName}`)).toEqual([
+      "execute_altering 철괴(철 광석)",
+      "wait_altering 철괴(철 광석)",
+      "complete_altering_work 철괴(철 광석)",
+      "execute_altering 강철괴",
+      "wait_altering 강철괴",
+      "complete_altering_work 강철괴",
+    ]);
+    expect(last).toMatchObject({ next_step: null, plan_done: expect.any(String) });
+    expect(await call("get_items", { name: "강철괴" })).toEqual([expect.objectContaining({ DisplayName: "강철괴", Count: 9 })]);
+    expect(asked()).toEqual(["propose_plan"]);
+  });
+
+  it("계획 중 다른 조회를 불러도 결과에 지금 단계가 next_step으로 붙는다", async () => {
+    const { call } = await setup(true, 50, true);
+    const { next_step } = await produce(call);
+    expect(await call("get_currencies")).toMatchObject({ result: expect.any(Array), next_step });
+  });
+
+  it("등록을 나눠 부르면 남은 등록 수가 next_step에 남는다", async () => {
+    const { call } = await setup(true, 50, true);
+    await produce(call);
+    await call("execute_altering", { displayName: "철괴(철 광석)", count: 1 });
+    await call("execute_altering", { displayName: "철괴(철 광석)", count: 1 });
+    expect(await call("get_currencies")).toMatchObject({ next_step: { tool: "execute_altering", input: { displayName: "철괴(철 광석)", count: 1 } } });
+  });
+
+  it("대기가 끝나지 않고 돌아오면 같은 대기를 다시 지시하지 않고 next_step null과 plan_stopped로 단계 지시를 멈춘다", async () => {
+    vi.useFakeTimers();
+    const { call, tools } = await setup(true, 50, true);
+    await produce(call);
+    await call("execute_altering", { displayName: "철괴(철 광석)", count: 3 });
+    const waiting = call("wait_altering", { displayName: "철괴(철 광석)" });
+    await vi.advanceTimersByTimeAsync(0);
+    await tools.cancel();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await waiting).toMatchObject({ result: { completed: false }, next_step: null, plan_stopped: expect.any(String) });
+    expect(await call("get_currencies")).not.toHaveProperty("next_step");
+  });
+
+  it("거부된 단계는 넘어가지 않는다", async () => {
+    const { call } = await setup(true, 50, true);
+    const { next_step } = await produce(call);
+    expect(await call("complete_altering_work", { displayName: "철괴(철 광석)" })).toMatchObject({ result: { error: "no_altering" }, next_step });
+  });
+
+  it("거절된 계획은 next_step을 붙이지 않는다", async () => {
+    const { call } = await setup(false, 50, true);
+    expect(await produce(call)).toMatchObject({ error: "user_denied" });
+    expect(await call("get_currencies")).not.toHaveProperty("next_step");
+  });
+
+  it("새 propose_plan은 단계 지시를 끝낸다", async () => {
+    const { call, propose } = await setup(true, 50, true);
+    await produce(call);
+    await propose([{ tool: "execute_gathering", displayName: "철 광석", times: 1 }]);
+    expect(await call("get_currencies")).not.toHaveProperty("next_step");
+  });
+
+  it("가공법을 모르면 승인을 묻지 않고 no_recipe를 돌려준다", async () => {
+    const { asked, call } = await setup(true, 50, true);
+    expect(await call("plan_production", { item: "목재", count: 3 })).toMatchObject({ error: "no_recipe" });
+    expect(asked()).toEqual([]);
+  });
+
+  it("계획의 날개가 세션 예산을 넘으면 묻지 않고 wings_budget으로 돌려준다", async () => {
+    const { asked, call } = await setup(true, 25, true);
+    expect(await produce(call)).toMatchObject({ error: "wings_budget" });
+    expect(asked()).toEqual([]);
   });
 });
