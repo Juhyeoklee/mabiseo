@@ -68,7 +68,13 @@ mabiseo/
 
 - 토글의 「자동 등록」이 무엇인가 — 우리는 CLI를 직접 부르므로 **몰라도 막히지 않는다.** 공식 등록분과 겹치면 한쪽만 쓴다 → **M0**
 - 1시간 팝업을 감지할 수 있는가 — 실측에서 아직 못 만났다. 만나도 다른 게임 창과 같은 `blocked` · `unknown_modal`일 수 있다 → #6
-- 사용자 인증 방식 — 사용자가 자기 API 키를 넣는가, 자기 Claude 구독을 연동하는가. Agent SDK 문서는 사전 승인 없는 제3자 제품의 claude.ai 로그인 사용을 금지한다 → 재판정 #11
+- 사용자 인증 방식 — 기본은 OpenAI Sign in with ChatGPT(Plus·Pro), Claude(API 키)는 두 번째 구현(판정 2026-10-07 · #11). 구현은 #28. 실측(2026-10-07 · #27 · Mac 가짜):
+  - 경로: 오픈소스·로컬 앱용 셀프 등록. `auth.openai.com/api/accounts/authorize`에 `client_id=dynamic_agent_client` · PKCE · 루프백 `http://127.0.0.1:<포트>/callback`으로 로그인하면 `oaiapp_…` client_id가 발급된다. 액세스 토큰은 1시간, 갱신 토큰은 30일. 추론은 `api.openai.com/v1/responses`. Codex CLI 로그인 토큰은 scope가 `api.connectors.*`뿐이라 401(`api.responses.write` 없음)로 빌려 쓸 수 없다
+  - 요청: `store:false` · `stream:true`가 없으면 400. `additional_tools`는 400. `previous_response_id`가 없으니 출력 항목과 `function_call_output`을 입력에 쌓아 다시 보낸다. 응답은 lite라 `response.completed`의 `output`이 비고, 항목은 `response.output_item.done`으로만 온다
+  - 최상위 `function` 도구를 그대로 받는다. `namespace`로 감싸도 된다. 카탈로그 29개와 `propose_plan`을 strict 없이 넣어 돌았다
+  - 병렬 도구 호출이 된다. `parallel_tool_calls:false`면 지킨다
+  - Agents SDK(JS 0.19)는 금지 필드를 보내지 않는다. `modelSettings.store=false`와 스트림 실행이 필요하고, 빈 `completed.output`을 `output_item.done`으로 채우는 fetch 심이 없으면 도구 호출을 못 보고 같은 요청을 maxTurns까지 되풀이한다
+  - 가짜 시나리오 넷(`gpt-6-astra` · 추론 기본 low). ① 날개 조회 `get_currencies` 성공 ② 통나무 채집(`--workshop`) 조회 둘 병렬 → `execute_gathering` 성공 ③ 강철괴 9개(`--workshop --wings=50`) 1/2. 조회 대여섯을 병렬로 부르고 광석이 모자란 채로 철괴 등록부터 한다. 성공한 판은 채집을 넣은 계획을 다시 승인받아 22회 응답 · 날개 35 · 18분, 실패한 판은 철괴 1회 수령 뒤 사용자에게 넘겼다 ④ 게임 꺼짐(`--fail=offline`) `get_my_info` 성공. Sonnet 5.5(#25)는 ①②④가 같고 ③은 채집부터 곧게 갔다
 - Windows 실행 방식 — 개발 중엔 `git pull` + 실행, 패키징은 나중
 - 승인 경계 — **기본안: 물어보기는 바로, 맡기기(날개 소모)는 폰에서 승인.** 일정량 이하는 묻지 않을지는 써보고 정한다
 - 제3자 래퍼 앱에 대한 정책 — 공지에 언급 없음. FAQ가 나오면 확인
