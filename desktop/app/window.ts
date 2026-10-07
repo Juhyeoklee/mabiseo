@@ -1,11 +1,14 @@
 interface Screen {
   rows: { label: string; value: string }[];
+  action: { kind: "login" | "logout"; label: string } | undefined;
   log: string[];
 }
 
 interface Bridge {
   onScreen(listener: (screen: Screen) => void): void;
   recheck(): void;
+  login(): void;
+  logout(): void;
 }
 
 function element(id: string): HTMLElement {
@@ -17,6 +20,8 @@ function element(id: string): HTMLElement {
 const bridge = (window as unknown as { mabiseo: Bridge }).mabiseo;
 const rowsList = element("rows");
 const logList = element("log");
+const accountButton = element("account");
+let action: Screen["action"];
 
 bridge.onScreen((screen) => {
   rowsList.replaceChildren(
@@ -28,9 +33,16 @@ bridge.onScreen((screen) => {
       return [label, value];
     }),
   );
+  action = screen.action;
+  accountButton.hidden = !action;
+  accountButton.textContent = action?.label ?? "";
   const atBottom = logList.scrollHeight - logList.scrollTop - logList.clientHeight < 8;
   logList.textContent = screen.log.join("\n");
   if (atBottom) logList.scrollTop = logList.scrollHeight;
 });
 
 element("recheck").addEventListener("click", () => bridge.recheck());
+accountButton.addEventListener("click", () => {
+  if (action?.kind === "login") bridge.login();
+  if (action?.kind === "logout") bridge.logout();
+});

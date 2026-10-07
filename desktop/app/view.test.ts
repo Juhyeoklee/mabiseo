@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { ServerView } from "../server/server.js";
-import { appendLog, rows, stamp, type Pairing } from "./view.js";
+import { accountAction, accountRow, appendLog, rows, stamp, type Account, type Pairing } from "./view.js";
 
 const pairing: Pairing = { pcName: "SOAP-PC", port: 7470, code: "482913" };
 const idle: ServerView = { connector: "connected", wings: 10, phones: [], asking: false };
@@ -56,5 +56,32 @@ describe("로그", () => {
     const original = ["첫 줄"];
     appendLog(original, "둘째 줄");
     expect(original).toEqual(["첫 줄"]);
+  });
+});
+
+describe("AI 계정 줄과 버튼", () => {
+  const chatgpt: Account = { service: "ChatGPT", state: { signedIn: false }, signingIn: false, canLogin: true, canLogout: true };
+  const signedIn: Account = { ...chatgpt, state: { signedIn: true, account: "me@example.com" } };
+
+  test("로그아웃 상태면 로그인이 필요하다고 보이고 로그인 버튼을 낸다", () => {
+    expect(accountRow(chatgpt)).toEqual({ label: "AI", value: "ChatGPT · 로그인 필요" });
+    expect(accountAction(chatgpt)).toEqual({ kind: "login", label: "ChatGPT 로그인" });
+  });
+
+  test("로그인 상태면 계정을 보이고 로그아웃 버튼을 낸다", () => {
+    expect(accountRow(signedIn)).toEqual({ label: "AI", value: "ChatGPT · me@example.com" });
+    expect(accountAction(signedIn)).toEqual({ kind: "logout", label: "로그아웃" });
+  });
+
+  test("로그인이 진행 중이면 브라우저에서 계속하라고 보이고 버튼을 숨긴다", () => {
+    expect(accountRow({ ...chatgpt, signingIn: true })).toEqual({ label: "AI", value: "ChatGPT · 브라우저에서 로그인하는 중" });
+    expect(accountAction({ ...chatgpt, signingIn: true })).toBeUndefined();
+  });
+
+  test("로그인을 지원하지 않는 공급자는 버튼이 없다", () => {
+    const claude: Account = { service: "Claude", state: { signedIn: false }, signingIn: false, canLogin: false, canLogout: false };
+    expect(accountRow(claude)).toEqual({ label: "AI", value: "Claude · 로그인 필요" });
+    expect(accountAction(claude)).toBeUndefined();
+    expect(accountAction({ ...claude, state: { signedIn: true, account: "API 키" } })).toBeUndefined();
   });
 });

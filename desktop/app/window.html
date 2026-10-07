@@ -74,6 +74,13 @@
         font: 12px/1.6 ui-monospace, Consolas, monospace;
         white-space: pre-wrap;
       }
+      .buttons {
+        display: flex;
+        gap: 8px;
+      }
+      button[hidden] {
+        display: none;
+      }
       button {
         align-self: flex-start;
         font: inherit;
@@ -90,7 +97,10 @@
     <section>
       <dl id="rows"></dl>
     </section>
-    <button id="recheck" type="button">상태 다시 확인</button>
+    <div class="buttons">
+      <button id="recheck" type="button">상태 다시 확인</button>
+      <button id="account" type="button" hidden></button>
+    </div>
     <section class="log">
       <h2>로그</h2>
       <pre id="log"></pre>
