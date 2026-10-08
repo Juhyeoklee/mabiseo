@@ -33,8 +33,14 @@ struct ChatView: View {
           }
         }
         if let approval = session.approval {
-          ApprovalView(approval: approval) { allow in Task { await session.approve(allow) } }
-            .disabled(!linked)
+          Group {
+            if let plan = approval.plan {
+              PlanApprovalView(plan: plan, wings: approval.wings) { allow in Task { await session.approve(allow) } }
+            } else {
+              ApprovalView(approval: approval) { allow in Task { await session.approve(allow) } }
+            }
+          }
+          .disabled(!linked)
         }
         composer
       }
@@ -48,7 +54,11 @@ struct ChatView: View {
       .safeAreaInset(edge: .top, spacing: 0) {
         VStack(spacing: 0) {
           connectionBand
-          if let status = session.status { StatusView(status: status) }
+          if let job = session.job {
+            JobBar(job: job)
+          } else if let status = session.status {
+            StatusView(status: status)
+          }
         }
       }
     }
@@ -177,6 +187,129 @@ private struct ApprovalView: View {
   }
 }
 
+private let wingInk = Color(red: 0.54, green: 0.32, blue: 0)
+
+private struct PlanApprovalView: View {
+  let plan: Plan
+  let wings: Int
+  let answer: (Bool) -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      HStack(alignment: .firstTextBaseline) {
+        Text("이렇게 만들어요").font(.headline)
+        Spacer()
+        Text(PlanText.about(plan.totalSeconds)).font(.footnote).foregroundStyle(.secondary)
+      }
+      HStack(alignment: .top, spacing: 4) {
+        ForEach(plan.links, id: \.item) { link in
+          VStack(spacing: 6) {
+            VStack(spacing: 2) {
+              Text(link.item).font(.footnote).foregroundStyle(.secondary)
+              Text("\(link.count)").font(.title3.bold())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(link.item == plan.item ? Color.accentColor.opacity(0.12) : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            Text(PlanText.how(link)).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            if link.wings > 0 {
+              Text("날개 \(link.wings)").font(.caption.weight(.semibold)).foregroundStyle(wingInk)
+            }
+          }
+          .frame(maxWidth: .infinity)
+        }
+      }
+      HStack {
+        Text("날개를 써요")
+        Spacer()
+        Text("\(wings)").bold()
+      }
+      .foregroundStyle(wingInk)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 10)
+      .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+      HStack(spacing: 8) {
+        Button(role: .destructive) { answer(false) } label: {
+          Text("거절").frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        Button { answer(true) } label: {
+          Text("맡기기").bold().frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+      }
+      .controlSize(.large)
+    }
+    .padding()
+    .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 16))
+    .padding(12)
+    .background(Color(.secondarySystemBackground))
+  }
+}
+
+private struct JobBar: View {
+  let job: Job
+
+  // 가공 시설은 7칸이다(recordings/queue-full/)
+  private let facilitySlots = 7
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .firstTextBaseline) {
+        Text("\(job.plan.item) \(job.plan.count)개").bold()
+        Spacer()
+        Text(PlanText.progress(job)).font(.footnote).foregroundStyle(.secondary)
+      }
+      ProgressView(value: Double(job.done), total: Double(job.plan.steps.count))
+      HStack(spacing: 4) {
+        ForEach(job.plan.links, id: \.item) { link in
+          let state = job.state(of: link)
+          VStack(spacing: 2) {
+            Text(link.item).font(.caption).foregroundStyle(.secondary)
+            Text(PlanText.state(link, in: job)).font(.subheadline.bold()).foregroundStyle(ink(state))
+          }
+          .frame(maxWidth: .infinity)
+          .padding(.vertical, 8)
+          .background(fill(state), in: RoundedRectangle(cornerRadius: 10))
+        }
+      }
+      if let use = job.facilityInUse {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(use.facility).font(.caption).foregroundStyle(.secondary)
+          HStack(spacing: 4) {
+            ForEach(0..<facilitySlots, id: \.self) { slot in
+              RoundedRectangle(cornerRadius: 2)
+                .fill(slot < use.works ? Color.accentColor : Color(.systemGray5))
+                .frame(height: 8)
+            }
+          }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(use.facility) \(facilitySlots)칸 중 \(use.works)칸 사용")
+      }
+    }
+    .padding(.horizontal)
+    .padding(.vertical, 12)
+    .background(.bar)
+  }
+
+  private func ink(_ state: ChainLink.State) -> Color {
+    switch state {
+    case .finished: .green
+    case .active: .accentColor
+    case .pending: .primary
+    }
+  }
+
+  private func fill(_ state: ChainLink.State) -> Color {
+    switch state {
+    case .finished: .green.opacity(0.12)
+    case .active: .accentColor.opacity(0.12)
+    case .pending: Color(.secondarySystemBackground)
+    }
+  }
+}
+
 private struct EntryView: View {
   let entry: Entry
   let previous: Entry?
@@ -198,6 +331,17 @@ private struct EntryView: View {
       caption(text, lines: 3)
     case .agent(.progress(let activity, let elapsedSeconds)):
       caption("\(activity) 진행 중 · \(elapsedSeconds / 60)분 \(elapsedSeconds % 60)초")
+    case .plan(let plan, let done):
+      if done == 0 {
+        Text("날개 \(plan.totalWings)개 쓰기로 했어요")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity)
+      } else if done <= plan.steps.count {
+        Text(PlanText.finished(plan.steps[done - 1])).font(.subheadline)
+      }
+    case .agent(.planStep):
+      EmptyView()
     case .agent(.failed(let reason)):
       caption(failureText(reason)).foregroundStyle(.red)
     }

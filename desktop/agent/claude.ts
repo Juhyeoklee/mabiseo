@@ -28,7 +28,7 @@ export class ClaudeAgent implements Agent {
         systemPrompt,
         model,
         tools: [],
-        mcpServers: { [serverName]: mcpServer(session.tools, session.approve) },
+        mcpServers: { [serverName]: mcpServer(session) },
         allowedTools: [...allowedToolNames],
         permissionMode: "default",
         settingSources: [],

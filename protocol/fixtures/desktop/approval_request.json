@@ -2,10 +2,20 @@
   "type": "approval_request",
   "id": "r1",
   "askId": "a1",
-  "tool": "execute_gathering",
+  "tool": "propose_plan",
   "input": {
-    "displayName": "새록 버섯",
-    "count": 100
+    "execute_gathering 철 광석": 1,
+    "execute_altering 철괴(철 광석)": 3
   },
-  "wings": 5
+  "wings": 20,
+  "plan": {
+    "item": "철괴",
+    "count": 9,
+    "steps": [
+      { "kind": "gather", "item": "철 광석", "count": 100, "seconds": 140, "wings": 5 },
+      { "kind": "register", "item": "철괴", "count": 3, "seconds": 7, "wings": 15, "facility": "금속 가공 시설" },
+      { "kind": "wait", "item": "철괴", "count": 9, "seconds": 90, "wings": 0, "facility": "금속 가공 시설" },
+      { "kind": "collect", "item": "철괴", "count": 9, "seconds": 6, "wings": 0, "facility": "금속 가공 시설" }
+    ]
+  }
 }

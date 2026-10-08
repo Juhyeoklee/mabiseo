@@ -14,11 +14,12 @@ public enum AgentEvent: Codable, Equatable, Sendable {
   case tool(name: String, input: ToolInput)
   case toolResult(text: String)
   case progress(activity: String, elapsedSeconds: Int)
+  case planStep(done: Int, remainingSeconds: Int)
   case done(text: String, turns: Int, costUsd: Double)
   case failed(reason: String)
 
   private enum Key: String, CodingKey {
-    case kind, model, text, name, input, activity, elapsedSeconds, turns, costUsd, reason
+    case kind, model, text, name, input, activity, elapsedSeconds, done, remainingSeconds, turns, costUsd, reason
   }
 
   public init(from decoder: Decoder) throws {
@@ -41,6 +42,11 @@ public enum AgentEvent: Codable, Equatable, Sendable {
       self = .progress(
         activity: try container.decode(String.self, forKey: .activity),
         elapsedSeconds: try container.decode(Int.self, forKey: .elapsedSeconds))
+    case "plan_step":
+      try rejectUnknownKeys(in: decoder, allowed: [Key.kind, .done, .remainingSeconds])
+      self = .planStep(
+        done: try container.decode(Int.self, forKey: .done),
+        remainingSeconds: try container.decode(Int.self, forKey: .remainingSeconds))
     case "done":
       try rejectUnknownKeys(in: decoder, allowed: [Key.kind, .text, .turns, .costUsd])
       self = .done(
@@ -75,6 +81,10 @@ public enum AgentEvent: Codable, Equatable, Sendable {
       try container.encode("progress", forKey: .kind)
       try container.encode(activity, forKey: .activity)
       try container.encode(elapsedSeconds, forKey: .elapsedSeconds)
+    case .planStep(let done, let remainingSeconds):
+      try container.encode("plan_step", forKey: .kind)
+      try container.encode(done, forKey: .done)
+      try container.encode(remainingSeconds, forKey: .remainingSeconds)
     case .done(let text, let turns, let costUsd):
       try container.encode("done", forKey: .kind)
       try container.encode(text, forKey: .text)
@@ -91,11 +101,11 @@ public enum DesktopMessage: Codable, Equatable, Sendable {
   case paired(pcName: String)
   case pairFailed(reason: PairFailure)
   case status(connector: ConnectorState, wings: Int)
-  case approvalRequest(id: String, askId: String, tool: String, input: ToolInput, wings: Int)
+  case approvalRequest(id: String, askId: String, tool: String, input: ToolInput, wings: Int, plan: Plan?)
   case event(id: String, seq: Int, AgentEvent)
 
   private enum Key: String, CodingKey {
-    case type, pcName, reason, connector, wings, id, askId, tool, input, seq, event
+    case type, pcName, reason, connector, wings, id, askId, tool, input, plan, seq, event
   }
 
   public init(from decoder: Decoder) throws {
@@ -113,13 +123,14 @@ public enum DesktopMessage: Codable, Equatable, Sendable {
         connector: try container.decode(ConnectorState.self, forKey: .connector),
         wings: try container.decode(Int.self, forKey: .wings))
     case "approval_request":
-      try rejectUnknownKeys(in: decoder, allowed: [Key.type, .id, .askId, .tool, .input, .wings])
+      try rejectUnknownKeys(in: decoder, allowed: [Key.type, .id, .askId, .tool, .input, .wings, .plan])
       self = .approvalRequest(
         id: try container.decode(String.self, forKey: .id),
         askId: try container.decode(String.self, forKey: .askId),
         tool: try container.decode(String.self, forKey: .tool),
         input: try container.decode(ToolInput.self, forKey: .input),
-        wings: try container.decode(Int.self, forKey: .wings))
+        wings: try container.decode(Int.self, forKey: .wings),
+        plan: try container.decodeIfPresent(Plan.self, forKey: .plan))
     case "event":
       try rejectUnknownKeys(in: decoder, allowed: [Key.type, .id, .seq, .event])
       self = .event(
@@ -144,13 +155,14 @@ public enum DesktopMessage: Codable, Equatable, Sendable {
       try container.encode("status", forKey: .type)
       try container.encode(connector, forKey: .connector)
       try container.encode(wings, forKey: .wings)
-    case .approvalRequest(let id, let askId, let tool, let input, let wings):
+    case .approvalRequest(let id, let askId, let tool, let input, let wings, let plan):
       try container.encode("approval_request", forKey: .type)
       try container.encode(id, forKey: .id)
       try container.encode(askId, forKey: .askId)
       try container.encode(tool, forKey: .tool)
       try container.encode(input, forKey: .input)
       try container.encode(wings, forKey: .wings)
+      try container.encodeIfPresent(plan, forKey: .plan)
     case .event(let id, let seq, let event):
       try container.encode("event", forKey: .type)
       try container.encode(id, forKey: .id)

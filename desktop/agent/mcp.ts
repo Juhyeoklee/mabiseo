@@ -1,14 +1,13 @@
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
-import type { Tools } from "../tools/tools.js";
-import { handlers, toolNames, type Approve } from "./handlers.js";
+import { handlers, toolNames, type HandlerSession } from "./handlers.js";
 
 export const serverName = "mabiseo";
 
-export function mcpServer(tools: Tools, approve: Approve): McpSdkServerConfigWithInstance {
+export function mcpServer(session: HandlerSession): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
     name: serverName,
     version: "0",
-    tools: handlers(tools, approve).map((h) =>
+    tools: handlers(session).map((h) =>
       tool(h.name, h.description, h.shape, async (input) => ({ content: [{ type: "text" as const, text: JSON.stringify(await h.run(input)) }] })),
     ),
   });
