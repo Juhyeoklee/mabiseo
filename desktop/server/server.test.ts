@@ -1,11 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { desktopMessage, type DesktopMessage, type PhoneMessage } from "../../protocol/messages.js";
+import { desktopMessage, plan, type DesktopMessage, type PhoneMessage } from "../../protocol/messages.js";
 import type { AgentEvent, Session } from "../agent/agent.js";
 import type { Connector, Json } from "../connector/connector.js";
 import { FakeConnector } from "../connector/fake.js";
 import { readJson } from "../connector/recordings.js";
+import { productionSteps, type Outline } from "../tools/production.js";
 import { Tools } from "../tools/tools.js";
 import { Server, type Ask, type Report, type ServerView } from "./server.js";
 
@@ -406,6 +407,43 @@ describe("승인", () => {
     expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "done", text: "채집을 시작했다." } });
     phone.close();
     await server.close();
+  });
+
+  test("가공 계획 승인은 단계 모양을 plan으로 싣고, 단계 진행은 plan_step 이벤트로 폰에 간다. 다른 승인에는 plan이 없다", async () => {
+    const outline: Outline = {
+      item: "철괴",
+      count: 3,
+      steps: [
+        { kind: "register", item: "철괴", count: 1, seconds: 7, wings: 5, facility: "금속 가공 시설" },
+        { kind: "wait", item: "철괴", count: 3, seconds: 30, wings: 0, facility: "금속 가공 시설" },
+      ],
+    };
+    const planned: Ask = async (_prompt, session) => {
+      await session.approve("propose_plan", { "execute_altering 철괴(철 광석)": 1 }, 5, outline);
+      session.onEvent({ kind: "plan_step", done: 1, remainingSeconds: 30 });
+      await session.approve("execute_gathering", { displayName: "새록 버섯" }, 5);
+      session.onEvent({ kind: "done", text: "끝", turns: 1, costUsd: 0 });
+    };
+    const { server } = await serve(planned);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "철괴 3개 만들어줘" });
+    const request = await phone.next();
+    if (request.type !== "approval_request") throw new Error(request.type);
+    expect(request.plan).toEqual(outline);
+    phone.send({ type: "approve", id: request.id, allow: true });
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 0, event: { kind: "plan_step", done: 1, remainingSeconds: 30 } });
+    const plain = await phone.next();
+    if (plain.type !== "approval_request") throw new Error(plain.type);
+    expect(plain).not.toHaveProperty("plan");
+    phone.close();
+    await server.close();
+  });
+
+  test("생산 계획이 내는 단계 모양은 프로토콜의 plan 계약을 그대로 통과한다", () => {
+    const production = productionSteps("강철괴", 24, new Map(), ["철 광석"]);
+    if (!("outline" in production)) throw new Error("계획이 서지 않았다");
+    expect(plan.parse(production.outline)).toEqual(production.outline);
   });
 
   test("allow가 false면 거부로 돌아간다", async () => {

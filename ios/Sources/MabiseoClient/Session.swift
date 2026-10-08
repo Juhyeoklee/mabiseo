@@ -27,12 +27,14 @@ public struct PendingApproval: Equatable, Sendable, Identifiable {
   public let tool: String
   public let input: ToolInput
   public let wings: Int
+  public let plan: Plan?
 }
 
 public struct Entry: Equatable, Sendable, Identifiable {
   public enum Body: Equatable, Sendable {
     case request(String)
     case agent(AgentEvent)
+    case plan(Plan, done: Int)
   }
 
   public let id: Int
@@ -47,6 +49,7 @@ public final class Session {
   public private(set) var approval: PendingApproval?
   public private(set) var askId: String?
   public private(set) var pcName: String?
+  public private(set) var job: Job?
 
   private let makeTransport: @Sendable () -> any Transport
   private let makeId: @Sendable () -> String
@@ -55,6 +58,7 @@ public final class Session {
   private var nextEntryId = 0
   private var code: String?
   private var nextSeq = 0
+  private var approvedPlan: Plan?
 
   public init(makeTransport: @escaping @Sendable () -> any Transport, makeId: @escaping @Sendable () -> String = { UUID().uuidString }) {
     self.makeTransport = makeTransport
@@ -86,6 +90,8 @@ public final class Session {
     let id = makeId()
     askId = id
     nextSeq = 0
+    job = nil
+    approvedPlan = nil
     append(.request(text))
     await send(.ask(id: id, text: text))
   }
@@ -93,6 +99,7 @@ public final class Session {
   public func approve(_ allow: Bool) async {
     guard let approval else { return }
     self.approval = nil
+    if allow, let plan = approval.plan { approvedPlan = plan }
     await send(.approve(id: approval.id, allow: allow))
   }
 
@@ -154,25 +161,61 @@ public final class Session {
       phase = .wrongCode
     case .status(let connector, let wings):
       status = Status(connector: connector, wings: wings)
-    case .approvalRequest(let id, let askId, let tool, let input, let wings):
+    case .approvalRequest(let id, let askId, let tool, let input, let wings, let plan):
       guard askId == self.askId else { return }
-      approval = PendingApproval(id: id, tool: tool, input: input, wings: wings)
+      approval = PendingApproval(id: id, tool: tool, input: input, wings: wings, plan: plan)
+      if plan != nil { dropToolLinesSinceRequest() }
     case .event(let id, let seq, let event):
       guard id == askId, seq >= nextSeq else { return }
       nextSeq = seq + 1
-      if case .progress = event, let last = entries.last, case .agent(.progress) = last.body {
-        entries[entries.count - 1] = Entry(id: last.id, body: .agent(event))
-      } else {
-        append(.agent(event))
-      }
+      record(event)
       switch event {
+      case .planStep(let done, let remainingSeconds):
+        if let plan = approvedPlan { job = Job(plan: plan, done: done, remainingSeconds: remainingSeconds) }
       case .done, .failed:
         askId = nil
         approval = nil
+        job?.ended = true
       case .started, .text, .tool, .toolResult, .progress:
         break
       }
     }
+  }
+
+  private func record(_ event: AgentEvent) {
+    if job?.ended == false {
+      switch event {
+      case .tool, .toolResult, .progress: return
+      default: break
+      }
+    }
+    switch (event, entries.last?.body) {
+    case (.progress, .agent(.progress)?):
+      replaceLast(with: event)
+    case (.planStep(let done, _), _) where approvedPlan != nil:
+      guard let plan = approvedPlan else { return }
+      let shown = entries.last { if case .plan = $0.body { true } else { false } }
+      if shown?.body == .plan(plan, done: done) { return }
+      append(.plan(plan, done: done))
+    default:
+      append(.agent(event))
+    }
+  }
+
+  private func dropToolLinesSinceRequest() {
+    guard let request = entries.lastIndex(where: { if case .request = $0.body { true } else { false } }) else { return }
+    let kept = entries[(request + 1)...].filter { entry in
+      switch entry.body {
+      case .agent(.tool), .agent(.toolResult), .agent(.progress): false
+      default: true
+      }
+    }
+    entries.replaceSubrange((request + 1)..., with: kept)
+  }
+
+  private func replaceLast(with event: AgentEvent) {
+    guard let last = entries.last else { return }
+    entries[entries.count - 1] = Entry(id: last.id, body: .agent(event))
   }
 
   private func append(_ body: Entry.Body) {

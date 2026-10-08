@@ -181,10 +181,14 @@ func secondAskWhileBusyIsIgnored() async throws {
 func approvalRoundTrip() async throws {
   let transport = FakeTransport()
   let session = try await pairedSession(transport: transport)
-  await session.ask("새록 버섯 100개 캐 줘")
+  await session.ask("철괴 9개 만들어줘")
   transport.push(try fixture("approval_request"))
   await settle { session.approval != nil }
-  #expect(session.approval == PendingApproval(id: "r1", tool: "execute_gathering", input: ["displayName": .string("새록 버섯"), "count": .number(100)], wings: 5))
+  #expect(session.approval?.id == "r1")
+  #expect(session.approval?.tool == "propose_plan")
+  #expect(session.approval?.wings == 20)
+  #expect(session.approval?.plan?.item == "철괴")
+  #expect(session.approval?.plan?.steps.map(\.kind) == [.gather, .register, .wait, .collect])
   await session.approve(true)
   #expect(session.approval == nil)
   #expect(try json(await transport.sent[2]) == ["type": "approve", "id": "r1", "allow": true])
@@ -195,7 +199,7 @@ func approvalRoundTrip() async throws {
 func cancelEndsRun() async throws {
   let transport = FakeTransport()
   let session = try await pairedSession(transport: transport)
-  await session.ask("새록 버섯 100개 캐 줘")
+  await session.ask("철괴 9개 만들어줘")
   transport.push(try fixture("approval_request"))
   await settle { session.approval != nil }
   await session.cancel()
@@ -220,14 +224,14 @@ func cancelWithoutRunIsIgnored() async throws {
 func closedSocketIsLost() async throws {
   let transport = FakeTransport()
   let session = try await pairedSession(transport: transport)
-  await session.ask("새록 버섯 100개 캐 줘")
+  await session.ask("철괴 9개 만들어줘")
   transport.push(try fixture("approval_request"))
   await settle { session.approval != nil }
   transport.close()
   await settle { session.phase == .lost(.closed) }
   #expect(session.busy)
   #expect(session.approval == nil)
-  #expect(session.entries.map(\.body) == [.request("새록 버섯 100개 캐 줘")])
+  #expect(session.entries.map(\.body) == [.request("철괴 9개 만들어줘")])
   #expect(session.pcName == "SOAP-PC")
 }
 
@@ -348,7 +352,7 @@ func reconnectReceivesApprovalAgain() async throws {
   let first = FakeTransport()
   let second = FakeTransport()
   let session = try await pairedSession(transport: first, then: [second])
-  await session.ask("새록 버섯 100개 캐 줘")
+  await session.ask("철괴 9개 만들어줘")
   first.push(try fixture("approval_request"))
   await settle { session.approval != nil }
   await session.reconnect()
@@ -409,4 +413,127 @@ func overlappingReconnectOpensOnce() async throws {
   _ = await (one, two)
   #expect(await second.connects == 1)
   #expect(await third.connects == 0)
+}
+
+@MainActor
+private func plannedSession(allow: Bool = true) async throws -> (Session, FakeTransport) {
+  let transport = FakeTransport()
+  let session = try await pairedSession(transport: transport)
+  await session.ask("철괴 9개 만들어줘")
+  transport.push(try fixture("approval_request"))
+  await settle { session.approval != nil }
+  await session.approve(allow)
+  return (session, transport)
+}
+
+private func planStep(seq: Int, done: Int, remaining: Int) -> String {
+  #"{"type":"event","id":"a1","seq":\#(seq),"event":{"kind":"plan_step","done":\#(done),"remainingSeconds":\#(remaining)}}"#
+}
+
+@MainActor
+@Test("허용한 계획에 plan_step이 오면 job이 계획 · 마친 수 · 남은 시간을 싣고, 대화에는 단계마다 그 계획을 든 줄이 하나씩 붙는다")
+func planStepMakesJob() async throws {
+  let (session, transport) = try await plannedSession()
+  transport.push(planStep(seq: 0, done: 0, remaining: 243))
+  transport.push(planStep(seq: 1, done: 1, remaining: 103))
+  transport.push(try event("event.text", seq: 2))
+  transport.push(planStep(seq: 3, done: 1, remaining: 80))
+  await settle { session.job?.remainingSeconds == 80 }
+  let plan = try #require(session.job?.plan)
+  #expect(plan.item == "철괴")
+  #expect(session.job?.done == 1)
+  #expect(session.entries.map(\.body) == [
+    .request("철괴 9개 만들어줘"),
+    .plan(plan, done: 0),
+    .plan(plan, done: 1),
+    .agent(.text("날개가 10개 남았다.")),
+  ])
+}
+
+@MainActor
+@Test("계획이 도는 동안 도구 · 결과 · 진행 줄은 대화에 쌓이지 않고, 끝나면 job은 끝남으로 남는다")
+func planHidesToolLines() async throws {
+  let (session, transport) = try await plannedSession()
+  transport.push(planStep(seq: 0, done: 0, remaining: 243))
+  transport.push(try event("event.tool", seq: 1))
+  transport.push(try event("event.tool_result", seq: 2))
+  transport.push(try event("event.progress", seq: 3))
+  transport.push(try event("event.text", seq: 4))
+  transport.push(try event("event.done", seq: 5))
+  await settle { !session.busy }
+  let plan = try #require(session.job?.plan)
+  #expect(session.entries.map(\.body) == [
+    .request("철괴 9개 만들어줘"),
+    .plan(plan, done: 0),
+    .agent(.text("날개가 10개 남았다.")),
+    .agent(.done(text: "채집을 시작했다.", turns: 3, costUsd: 0.0312)),
+  ])
+  #expect(session.job?.ended == true)
+}
+
+@MainActor
+@Test("거절한 계획은 plan_step이 와도 job을 만들지 않는다")
+func deniedPlanMakesNoJob() async throws {
+  let (session, transport) = try await plannedSession(allow: false)
+  transport.push(planStep(seq: 0, done: 0, remaining: 243))
+  await settle { session.entries.count == 2 }
+  #expect(session.job == nil)
+}
+
+@MainActor
+@Test("새 ask는 앞 계획의 job을 비운다")
+func newAskClearsJob() async throws {
+  let transport = FakeTransport()
+  let session = try await pairedSession(transport: transport, ids: ["a1", "a2"])
+  await session.ask("철괴 9개 만들어줘")
+  transport.push(try fixture("approval_request"))
+  await settle { session.approval != nil }
+  await session.approve(true)
+  transport.push(planStep(seq: 0, done: 0, remaining: 243))
+  transport.push(try event("event.done", seq: 1))
+  await settle { !session.busy }
+  #expect(session.job != nil)
+  await session.ask("날개 얼마나 남았어")
+  #expect(session.job == nil)
+}
+
+@MainActor
+@Test("계획 승인 요청이 오면 그 요청을 부른 도구 줄을 대화에서 지운다")
+func planApprovalDropsToolLines() async throws {
+  let transport = FakeTransport()
+  let session = try await pairedSession(transport: transport)
+  await session.ask("철괴 9개 만들어줘")
+  transport.push(try event("event.started", seq: 0))
+  transport.push(try event("event.tool", seq: 1))
+  transport.push(try fixture("approval_request"))
+  await settle { session.approval != nil }
+  #expect(session.entries.map(\.body) == [
+    .request("철괴 9개 만들어줘"),
+    .agent(.started(model: "claude-opus-5-5")),
+  ])
+}
+
+@MainActor
+@Test("새 계획이 시작돼도 앞 계획의 대화 줄은 앞 계획을 든 채 남는다")
+func earlierPlanLinesKeepTheirPlan() async throws {
+  let transport = FakeTransport()
+  let session = try await pairedSession(transport: transport, ids: ["a1", "a2"])
+  await session.ask("철괴 9개 만들어줘")
+  transport.push(try fixture("approval_request"))
+  await settle { session.approval != nil }
+  await session.approve(true)
+  transport.push(planStep(seq: 0, done: 1, remaining: 103))
+  transport.push(try event("event.done", seq: 1))
+  await settle { !session.busy }
+  let first = try #require(session.job?.plan)
+
+  await session.ask("강철괴 3개 만들어줘")
+  let second = Plan(item: "강철괴", count: 3, steps: [PlanStep(kind: .register, item: "강철괴", count: 1, seconds: 7, wings: 5)])
+  let request = DesktopMessage.approvalRequest(id: "r2", askId: "a2", tool: "propose_plan", input: [:], wings: 5, plan: second)
+  transport.push(String(decoding: try JSONEncoder().encode(request), as: UTF8.self))
+  await settle { session.approval != nil }
+  await session.approve(true)
+  transport.push(#"{"type":"event","id":"a2","seq":0,"event":{"kind":"plan_step","done":1,"remainingSeconds":0}}"#)
+  await settle { session.job?.plan == second }
+  #expect(session.entries.compactMap { if case .plan(let plan, let done) = $0.body { "\(plan.item) \(done)" } else { nil } } == ["철괴 1", "강철괴 1"])
 }

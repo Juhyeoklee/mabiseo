@@ -55,3 +55,11 @@ func unknownEventFieldFails() {
   let data = Data(#"{"type":"event","id":"a1","seq":0,"event":{"kind":"text","text":"안녕","bold":true}}"#.utf8)
   #expect(throws: DecodingError.self) { try JSONDecoder().decode(DesktopMessage.self, from: data) }
 }
+
+@Test("계획이 없는 승인 요청은 plan 키 없이 인코드된다")
+func approvalWithoutPlanOmitsKey() throws {
+  let message = DesktopMessage.approvalRequest(id: "r1", askId: "a1", tool: "t", input: [:], wings: 5, plan: nil)
+  let object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(message)) as? [String: Any])
+  #expect(object["plan"] == nil)
+  #expect(try JSONDecoder().decode(DesktopMessage.self, from: JSONEncoder().encode(message)) == message)
+}

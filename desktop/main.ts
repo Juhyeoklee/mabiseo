@@ -85,6 +85,9 @@ function print(event: AgentEvent): void {
     case "progress":
       console.log(`[진행] ${event.activity} · ${event.elapsedSeconds}초`);
       break;
+    case "plan_step":
+      console.log(`[계획] ${event.done}단계 마침 · 약 ${event.remainingSeconds}초 남음`);
+      break;
     case "done":
       console.log(`[끝] ${event.turns}턴 · $${event.costUsd.toFixed(4)}`);
       break;

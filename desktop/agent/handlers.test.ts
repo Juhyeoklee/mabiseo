@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Connector, Json } from "../connector/connector.js";
 import { FakeConnector } from "../connector/fake.js";
 import { Workshop } from "../connector/workshop.js";
+import type { Outline } from "../tools/production.js";
 import { Tools } from "../tools/tools.js";
+import type { AgentEvent } from "./agent.js";
 import { handlers } from "./handlers.js";
 
 const dir = fileURLToPath(new URL("../../recordings/", import.meta.url));
@@ -27,13 +29,16 @@ async function setup(decision: boolean, wings = 10, workshop = false) {
   const recorded = await FakeConnector.fromDirectory(dir);
   const connector = new Counting(workshop ? new Workshop(recorded, { "철 광석": 40 }, 100) : recorded);
   const requests: Asked[] = [];
+  const outlines: (Outline | undefined)[] = [];
+  const events: AgentEvent[] = [];
   const decisions = { next: decision };
-  const approve = async (tool: string, input: unknown, cost: number) => {
+  const approve = async (tool: string, input: unknown, cost: number, outline?: Outline) => {
     requests.push({ tool, input, wings: cost });
+    outlines.push(outline);
     return decisions.next;
   };
   const tools = new Tools(connector, wings);
-  const list = handlers(tools, approve);
+  const list = handlers({ tools, approve, onEvent: (event) => events.push(event) });
   const call = async (name: string, input: unknown = {}) => {
     const found = list.find((h) => h.name === name);
     if (!found) throw new Error(name);
@@ -41,7 +46,7 @@ async function setup(decision: boolean, wings = 10, workshop = false) {
   };
   const propose = (steps: { tool: string; displayName: string; times: number }[]) => call("propose_plan", { steps });
   const asked = (): string[] => requests.map((r) => r.tool);
-  return { connector, tools, asked, requests, list, call, propose, decisions };
+  return { connector, tools, asked, requests, outlines, events, list, call, propose, decisions };
 }
 
 describe("카탈로그가 공급자와 무관한 도구가 된다", () => {
@@ -199,8 +204,9 @@ describe("가공 계획을 세우고 단계별로 지시한다", () => {
     let last: Json = null;
     while (next) {
       called.push(next);
-      const pending = call(next.tool, next.input);
-      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      let settled = false;
+      const pending = call(next.tool, next.input).finally(() => (settled = true));
+      for (let ms = 0; !settled && ms < 20 * 60_000; ms += 10_000) await vi.advanceTimersByTimeAsync(10_000);
       last = await pending;
       next = (last as { next_step: Next | null }).next_step;
     }
@@ -226,6 +232,55 @@ describe("가공 계획을 세우고 단계별로 지시한다", () => {
         wings: 30,
       },
     ]);
+  });
+
+  it("승인 요청에 단계마다 종류 · 만드는 것 · 수 · 예상 초 · 날개 · 시설을 싣는다", async () => {
+    const { outlines, call } = await setup(true, 50, true);
+    await produce(call);
+    const metal = "금속 가공 시설";
+    expect(outlines).toEqual([
+      {
+        item: "강철괴",
+        count: 9,
+        steps: [
+          { kind: "register", item: "철괴", count: 3, seconds: 7, wings: 15, facility: metal },
+          { kind: "wait", item: "철괴", count: 9, seconds: 90, wings: 0, facility: metal },
+          { kind: "collect", item: "철괴", count: 9, seconds: 6, wings: 0, facility: metal },
+          { kind: "register", item: "강철괴", count: 3, seconds: 7, wings: 15, facility: metal },
+          { kind: "wait", item: "강철괴", count: 9, seconds: 900, wings: 0, facility: metal },
+          { kind: "collect", item: "강철괴", count: 9, seconds: 6, wings: 0, facility: metal },
+        ],
+      },
+    ]);
+  });
+
+  it("propose_plan 승인 요청에는 단계 모양을 싣지 않는다", async () => {
+    const { outlines, propose } = await setup(true, 50, true);
+    await propose([{ tool: "execute_gathering", displayName: "철 광석", times: 1 }]);
+    expect(outlines).toEqual([undefined]);
+  });
+
+  it("승인되면 0단계와 전체 예상 시간을 알리고, 단계를 마칠 때마다 마친 수와 남은 예상 시간을 알린다", async () => {
+    vi.useFakeTimers();
+    const { events, call } = await setup(true, 50, true);
+    await follow(call, (await produce(call)).next_step);
+    const steps = events.flatMap((e) => (e.kind === "plan_step" ? [e] : []));
+    const firsts = steps.filter((e, i) => i === 0 || steps[i - 1]?.done !== e.done);
+    expect(firsts.map((e) => [e.done, e.remainingSeconds])).toEqual([
+      [0, 1016],
+      [1, 1009],
+      [2, 919],
+      [3, 913],
+      [4, 906],
+      [5, 6],
+      [6, 0],
+    ]);
+  });
+
+  it("거절된 계획은 단계 진행을 알리지 않는다", async () => {
+    const { events, call } = await setup(false, 50, true);
+    await produce(call);
+    expect(events).toEqual([]);
   });
 
   it("next_step대로 부르면 다시 묻지 않고 강철괴까지 가고, 마지막 결과에 next_step null과 plan_done이 붙는다", async () => {

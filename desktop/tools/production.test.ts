@@ -16,35 +16,48 @@ const altering = (displayName: string, count: number) => [
 
 describe("가공 계획은 목표에서 재료를 거꾸로 센다", () => {
   it("철 광석 12개로 강철괴 9개를 만들려면 채집 1번 뒤 철괴 3번 · 강철괴 3번을 등록하고 각각 기다려 수령한다", () => {
-    expect(productionSteps(steel, 9, new Map([["철 광석", 12]]), ore)).toEqual({
+    expect(productionSteps(steel, 9, new Map([["철 광석", 12]]), ore)).toMatchObject({
       steps: [gather, ...altering(iron, 3), ...altering(steel, 3)],
     });
   });
 
   it("가진 중간 재료를 먼저 쓰고 모자란 만큼만 가공한다", () => {
-    expect(productionSteps(steel, 9, new Map([["철괴", 6], ["철 광석", 12]]), ore)).toEqual({
+    expect(productionSteps(steel, 9, new Map([["철괴", 6], ["철 광석", 12]]), ore)).toMatchObject({
       steps: [...altering(iron, 1), ...altering(steel, 3)],
     });
   });
 
   it("산출이 목표를 넘으면 등록 수를 올림한다", () => {
-    expect(productionSteps(steel, 4, new Map([["철 광석", 20]]), ore)).toEqual({
+    expect(productionSteps(steel, 4, new Map([["철 광석", 20]]), ore)).toMatchObject({
       steps: [...altering(iron, 2), ...altering(steel, 2)],
     });
   });
 
   it("등록이 7칸을 넘으면 7씩 나눠 그 사이에 기다려 수령한다", () => {
-    expect(productionSteps(steel, 24, new Map(), ore)).toEqual({
+    expect(productionSteps(steel, 24, new Map(), ore)).toMatchObject({
       steps: [gather, ...altering(iron, 7), ...altering(iron, 1), ...altering(steel, 7), ...altering(steel, 1)],
     });
   });
 
   it("채집 1번은 100개라 그보다 많이 모자라면 채집을 여러 번 넣는다", () => {
-    expect(productionSteps("철괴", 60, new Map(), ore)).toEqual({ steps: [gather, gather, ...altering(iron, 7), ...altering(iron, 7), ...altering(iron, 6)] });
+    expect(productionSteps("철괴", 60, new Map(), ore)).toMatchObject({ steps: [gather, gather, ...altering(iron, 7), ...altering(iron, 7), ...altering(iron, 6)] });
   });
 
   it("가공 이름으로 불러도 같은 계획이 나온다", () => {
-    expect(productionSteps(iron, 3, new Map([["철 광석", 10]]), ore)).toEqual({ steps: altering(iron, 1) });
+    expect(productionSteps(iron, 3, new Map([["철 광석", 10]]), ore)).toMatchObject({ steps: altering(iron, 1) });
+  });
+
+  it("단계 모양은 채집 1번에 100개, 등록 묶음마다 그 묶음의 산출 수와 가공 시간을 센다", () => {
+    const metal = { item: "철괴", facility: "금속 가공 시설" };
+    const batch = (works: number) => [
+      { kind: "register", count: works, seconds: 7, wings: 5 * works, ...metal },
+      { kind: "wait", count: works * 3, seconds: works * 30, wings: 0, ...metal },
+      { kind: "collect", count: works * 3, seconds: 6, wings: 0, ...metal },
+    ];
+    const ore100 = { kind: "gather", item: "철 광석", count: 100, seconds: 138, wings: 5 };
+    expect(productionSteps("철괴", 60, new Map(), ore)).toMatchObject({
+      outline: { item: "철괴", count: 60, steps: [ore100, ore100, ...batch(7), ...batch(7), ...batch(6)] },
+    });
   });
 
   it("가공법을 모르는 목표는 no_recipe, 가공도 채집도 안 되는 재료는 cannot_supply를 값으로 돌려준다", () => {
@@ -71,7 +84,7 @@ describe("가공 계획은 게임에서 가진 수와 채집 목록을 읽는다
       { Location: "character_storage", DisplayName: "철괴", Category: "Ingredient", Count: 3, IsLocked: false },
     ];
     const tools = new Tools(new Stub({ get_items: items, get_gatherable_items: gatherable }), 0);
-    expect(await planProduction(tools, steel, 9)).toEqual({ steps: [...altering(iron, 2), ...altering(steel, 3)] });
+    expect(await planProduction(tools, steel, 9)).toMatchObject({ steps: [...altering(iron, 2), ...altering(steel, 3)] });
   });
 
   it("조회가 거부되면 계획 없이 그 거부를 돌려준다", async () => {

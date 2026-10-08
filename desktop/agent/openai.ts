@@ -32,7 +32,7 @@ export class OpenAiAgent implements Agent {
 
   async ask(prompt: string, session: Session): Promise<void> {
     if (!(await this.auth.credential())) return session.onEvent({ kind: "failed", reason: signedOutReason });
-    const list = handlers(session.tools, session.approve);
+    const list = handlers(session);
     const byName = new Map(list.map((h) => [h.name, h]));
     const tools = list.map(functionTool);
     const input: Item[] = [{ role: "user", content: [{ type: "input_text", text: prompt }] }];

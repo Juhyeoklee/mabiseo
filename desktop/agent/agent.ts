@@ -7,6 +7,7 @@ export type AgentEvent =
   | { kind: "tool"; name: string; input: unknown }
   | { kind: "tool_result"; text: string }
   | { kind: "progress"; activity: string; elapsedSeconds: number }
+  | { kind: "plan_step"; done: number; remainingSeconds: number }
   | { kind: "done"; text: string; turns: number; costUsd: number }
   | { kind: "failed"; reason: string };
 
