@@ -1,6 +1,7 @@
 import { catalog, type ToolSpec } from "../tools/catalog.js";
 import type { Outline, ProductionStep } from "../tools/production.js";
 import type { ToolInput } from "../tools/tools.js";
+import type { AgentEvent } from "./agent.js";
 
 export interface Step {
   tool: string;
@@ -12,7 +13,7 @@ export const plannable: readonly string[] = catalog
   .filter((spec: ToolSpec) => spec.kind === "execute" && spec.params.some((p) => p.name === "displayName"))
   .map((spec) => spec.name);
 
-export type Report = (done: number, remainingSeconds: number) => void;
+export type Report = (event: Extract<AgentEvent, { kind: "plan_step" | "plan_ended" }>) => void;
 
 export class Plan {
   #left = new Map<string, number>();
@@ -25,6 +26,7 @@ export class Plan {
 
   // 앞 계획의 남은 횟수를 잇지 않는다. 사용자가 본 것은 새 계획의 횟수뿐이다
   replace(steps: readonly Step[]): void {
+    if (this.#target !== undefined) this.report({ kind: "plan_ended", reason: "replaced" });
     this.#left = totals(steps);
     this.#guide = [];
     this.#seconds = [];
@@ -48,7 +50,7 @@ export class Plan {
   #report(elapsedSeconds: number): void {
     const [current = 0, ...rest] = this.#seconds;
     const remaining = Math.max(0, current - elapsedSeconds) + rest.reduce((sum, s) => sum + s, 0);
-    this.report(this.#total - this.#guide.length, remaining);
+    this.report({ kind: "plan_step", done: this.#total - this.#guide.length, remainingSeconds: remaining });
   }
 
   follow(name: string, input: ToolInput, result: unknown): unknown {
@@ -62,6 +64,7 @@ export class Plan {
     this.#guide = [];
     this.#seconds = [];
     this.#target = undefined;
+    this.report({ kind: "plan_ended", reason: stalled ? "stopped" : "done" });
     if (stalled) return { result, next_step: null, plan_stopped: `${target} 계획의 대기가 끝나지 않았다. 같은 대기를 되풀이하지 말고 사용자에게 알린다` };
     return { result, next_step: null, plan_done: `${target} 계획의 단계를 모두 마쳤다. 가진 수를 조회해 사용자에게 알린다` };
   }

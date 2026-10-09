@@ -472,6 +472,26 @@ func planHidesToolLines() async throws {
 }
 
 @MainActor
+@Test("plan_ended가 오면 요청이 끝나기 전에도 job이 끝남이 되고, 요청이 끝날 때까지 도구 줄은 계속 숨는다")
+func planEndedEndsJob() async throws {
+  let (session, transport) = try await plannedSession()
+  transport.push(planStep(seq: 0, done: 0, remaining: 243))
+  transport.push(#"{"type":"event","id":"a1","seq":1,"event":{"kind":"plan_ended","reason":"replaced"}}"#)
+  transport.push(try event("event.tool", seq: 2))
+  transport.push(try event("event.text", seq: 3))
+  await settle { session.entries.count == 4 }
+  let plan = try #require(session.job?.plan)
+  #expect(session.job?.ended == true)
+  #expect(session.busy)
+  #expect(session.entries.map(\.body) == [
+    .request("철괴 9개 만들어줘"),
+    .plan(plan, done: 0),
+    .agent(.planEnded(reason: .replaced)),
+    .agent(.text("날개가 10개 남았다.")),
+  ])
+}
+
+@MainActor
 @Test("거절한 계획은 plan_step이 와도 job을 만들지 않는다")
 func deniedPlanMakesNoJob() async throws {
   let (session, transport) = try await plannedSession(allow: false)

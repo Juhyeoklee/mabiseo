@@ -37,6 +37,14 @@ public enum PlanText {
     }
   }
 
+  public static func ended(_ reason: PlanEnd) -> String? {
+    switch reason {
+    case .done: nil
+    case .stopped: "가공 대기가 끝나지 않아 계획을 멈췄어요"
+    case .replaced: "계획이 새 계획으로 바뀌었어요"
+    }
+  }
+
   public static func finished(_ step: PlanStep) -> String {
     switch step.kind {
     case .gather: "\(step.item) \(step.count)개를 모았어요"

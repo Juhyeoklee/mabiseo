@@ -866,7 +866,7 @@ describe("상태 창 보고", () => {
 
   test("시작 직후 view는 폰 없이 대기 중이고 게임 상태와 날개를 담는다", async () => {
     const { server } = await serve(echoAsk);
-    expect(server.view()).toEqual({ connector: "connected", wings: 10, phones: [], asking: false });
+    expect(server.view()).toEqual({ connector: "connected", wings: 10, phones: [], asking: false, task: undefined });
     await server.close();
   });
 
@@ -949,14 +949,14 @@ describe("상태 창 보고", () => {
       `폰 연결: ${phoneAddress}`,
       "요청: 채집해 줘",
       "승인 요청: execute_gathering · 날개 5",
-      "승인 허용: execute_gathering",
-      "끝: 완료 · 1턴 · $0.000",
+      "승인 허용",
+      "끝: 완료 · 1턴",
     ]);
     phone.close();
     await server.close();
   });
 
-  test("도구 event는 「도구」 로그로 남는다", async () => {
+  test("도구 event는 로그에 남지 않는다", async () => {
     const ask: Ask = async (_prompt, session) => {
       session.onEvent({ kind: "tool", name: "get_my_info", input: {} });
       session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
@@ -966,12 +966,12 @@ describe("상태 창 보고", () => {
     await phone.pair();
     phone.send({ type: "ask", id: "a1", text: "내 정보" });
     expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "tool" } });
-    expect(notes.logs).toContain("도구: get_my_info");
+    expect(notes.logs).toEqual([`폰 연결: ${phoneAddress}`, "요청: 내 정보", "끝: 완료 · 1턴"]);
     phone.close();
     await server.close();
   });
 
-  test("취소된 요청은 「취소 요청」과 「끝: 실패 (cancelled)」로 남는다", async () => {
+  test("취소된 요청은 「취소 요청」과 「끝: 중단」으로 남는다", async () => {
     const { server, notes } = await serve(hangingAsk);
     const phone = await Phone.connect(server.port);
     await phone.pair();
@@ -979,8 +979,107 @@ describe("상태 창 보고", () => {
     await phone.next();
     phone.send({ type: "cancel", id: "a1" });
     expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
-    expect(notes.logs).toEqual([`폰 연결: ${phoneAddress}`, "요청: 오래 걸리는 일", "취소 요청", "끝: 실패 (cancelled)"]);
+    expect(notes.logs).toEqual([`폰 연결: ${phoneAddress}`, "요청: 오래 걸리는 일", "취소 요청", "끝: 중단"]);
     phone.close();
+    await server.close();
+  });
+
+  test("허용한 계획의 단계 진행 · 계획 끝남 · 요청 끝이 그 계획을 허용한 승인 요청의 id를 단 job으로 view의 task에 보고되고, 승인 요청 로그에 계획 목표가 남는다", async () => {
+    const outline: Outline = {
+      item: "철괴",
+      count: 3,
+      steps: [
+        { kind: "register", item: "철괴", count: 1, seconds: 7, wings: 5, facility: "금속 가공 시설" },
+        { kind: "wait", item: "철괴", count: 3, seconds: 30, wings: 0, facility: "금속 가공 시설" },
+      ],
+    };
+    const planned: Ask = async (_prompt, session) => {
+      await session.approve("propose_plan", { "execute_altering 철괴(철 광석)": 1 }, 5, outline);
+      session.onEvent({ kind: "plan_step", done: 0, remainingSeconds: 37 });
+      session.onEvent({ kind: "plan_step", done: 1, remainingSeconds: 30 });
+      session.onEvent({ kind: "plan_ended", reason: "replaced" });
+      session.onEvent({ kind: "done", text: "끝", turns: 2, costUsd: 0 });
+    };
+    const { server, notes } = await serve(planned);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "철괴 3개 만들어줘" });
+    const request = await phone.next();
+    if (request.type !== "approval_request") throw new Error(request.type);
+    phone.send({ type: "approve", id: request.id, allow: true });
+    await notes.until(() => notes.views.at(-1)?.asking === false);
+    const tasks = notes.views.map((v) => v.task);
+    expect(tasks).toContainEqual({ text: "철괴 3개 만들어줘", job: { planId: request.id, plan: outline, done: 1, remainingSeconds: 30, ended: undefined }, end: undefined });
+    expect(tasks.at(-1)).toEqual({ text: "철괴 3개 만들어줘", job: { planId: request.id, plan: outline, done: 1, remainingSeconds: 30, ended: "replaced" }, end: "done" });
+    expect(notes.logs).toContain("승인 요청: 철괴 3개 계획 · 날개 5");
+    phone.close();
+    await server.close();
+  });
+
+  test("거절한 계획 뒤의 단계 진행은 job을 만들지 않는다", async () => {
+    const outline: Outline = { item: "철괴", count: 3, steps: [{ kind: "wait", item: "철괴", count: 3, seconds: 30, wings: 0 }] };
+    const refused: Ask = async (_prompt, session) => {
+      await session.approve("propose_plan", {}, 0, outline);
+      session.onEvent({ kind: "plan_step", done: 0, remainingSeconds: 30 });
+      session.onEvent({ kind: "done", text: "끝", turns: 1, costUsd: 0 });
+    };
+    const { server, notes } = await serve(refused);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "철괴 3개 만들어줘" });
+    const request = await phone.next();
+    if (request.type !== "approval_request") throw new Error(request.type);
+    phone.send({ type: "approve", id: request.id, allow: false });
+    await notes.until(() => notes.views.at(-1)?.asking === false);
+    expect(notes.views.at(-1)?.task).toEqual({ text: "철괴 3개 만들어줘", job: undefined, end: "done" });
+    phone.close();
+    await server.close();
+  });
+
+  test("PC에서 중단하면 도는 요청이 취소되고 「PC에서 중단」 · 「끝: 중단」이 남고 task가 중단으로 끝난다", async () => {
+    const { server, notes } = await serve(hangingAsk);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
+    await phone.next();
+    server.stopRequest();
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
+    await notes.until(() => notes.views.at(-1)?.asking === false);
+    expect(notes.logs).toEqual([`폰 연결: ${phoneAddress}`, "요청: 오래 걸리는 일", "PC에서 중단", "끝: 중단"]);
+    expect(notes.views.at(-1)?.task).toEqual({ text: "오래 걸리는 일", job: undefined, end: "cancelled" });
+    phone.close();
+    await server.close();
+  });
+
+  test("취소한 뒤에 온 계획 끝남은 폰에 보내지 않고 view에도 싣지 않는다. 끝난 까닭은 중단이다", async () => {
+    const outline: Outline = { item: "철괴", count: 3, steps: [{ kind: "wait", item: "철괴", count: 3, seconds: 30, wings: 0 }] };
+    const waiting: Ask = async (_prompt, session) => {
+      await session.approve("propose_plan", {}, 0, outline);
+      session.onEvent({ kind: "plan_step", done: 0, remainingSeconds: 30 });
+      await waitForAbort(session);
+      session.onEvent({ kind: "plan_ended", reason: "stopped" });
+      session.onEvent({ kind: "failed", reason: "aborted by sdk" });
+    };
+    const { server, notes } = await serve(waiting);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "철괴 3개 만들어줘" });
+    const request = await phone.next();
+    if (request.type !== "approval_request") throw new Error(request.type);
+    phone.send({ type: "approve", id: request.id, allow: true });
+    expect(await phone.next()).toMatchObject({ event: { kind: "plan_step" } });
+    server.stopRequest();
+    expect(await phone.next()).toEqual({ type: "event", id: "a1", seq: 1, event: { kind: "failed", reason: "cancelled" } });
+    await notes.until(() => notes.views.at(-1)?.asking === false);
+    expect(notes.views.at(-1)?.task).toEqual({ text: "철괴 3개 만들어줘", job: { planId: request.id, plan: outline, done: 0, remainingSeconds: 30, ended: undefined }, end: "cancelled" });
+    phone.close();
+    await server.close();
+  });
+
+  test("도는 요청이 없으면 PC에서 중단해도 아무것도 남지 않는다", async () => {
+    const { server, notes } = await serve(echoAsk);
+    server.stopRequest();
+    expect(notes.logs).toEqual([]);
     await server.close();
   });
 
@@ -1061,7 +1160,7 @@ describe("상태 창 보고", () => {
     expect(started).toBe(false);
     held.open();
     await rechecked;
-    await notes.until(() => notes.logs.includes("끝: 완료 · 1턴 · $0.000"));
+    await notes.until(() => notes.logs.includes("끝: 완료 · 1턴"));
     expect(started).toBe(true);
     phone.close();
     await server.close();
@@ -1094,7 +1193,7 @@ describe("상태 창 보고", () => {
     expect(started).toBe(false);
     held.open();
     await rechecked;
-    await notes.until(() => notes.logs.includes("끝: 완료 · 1턴 · $0.000"));
+    await notes.until(() => notes.logs.includes("끝: 완료 · 1턴"));
     expect(started).toBe(true);
     phone.close();
     other.close();
@@ -1126,7 +1225,7 @@ describe("상태 창 보고", () => {
     await notes.until(() => notes.logs.includes("취소 요청"));
     held.open();
     await rechecked;
-    await notes.until(() => notes.logs.includes("끝: 실패 (cancelled)"));
+    await notes.until(() => notes.logs.includes("끝: 중단"));
     expect(started).toBe(false);
     phone.close();
     await server.close();

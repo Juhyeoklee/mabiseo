@@ -55,6 +55,13 @@ func endWording() {
   #expect(PlanText.progress(Job(plan: steel, done: 2, remainingSeconds: 900, ended: true)) == "멈췄어요 · 2/7")
 }
 
+@Test("계획이 멈추거나 바뀌면 그 까닭을 한 줄로 말하고, 다 마친 것은 단계 줄이 이미 말하므로 따로 말하지 않는다")
+func endedWording() {
+  #expect(PlanText.ended(.stopped) == "가공 대기가 끝나지 않아 계획을 멈췄어요")
+  #expect(PlanText.ended(.replaced) == "계획이 새 계획으로 바뀌었어요")
+  #expect(PlanText.ended(.done) == nil)
+}
+
 @Test("마친 단계는 지난 일로 말한다")
 func finishedStepWording() {
   #expect(steel.steps.map(PlanText.finished) == [

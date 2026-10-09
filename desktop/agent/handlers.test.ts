@@ -327,6 +327,40 @@ describe("가공 계획을 세우고 단계별로 지시한다", () => {
     expect(await call("get_currencies")).not.toHaveProperty("next_step");
   });
 
+  it("단계를 모두 마치면 계획이 다 끝났다고 알린다", async () => {
+    vi.useFakeTimers();
+    const { events, call } = await setup(true, 50, true);
+    await follow(call, (await produce(call)).next_step);
+    expect(events.filter((e) => e.kind === "plan_ended")).toEqual([{ kind: "plan_ended", reason: "done" }]);
+  });
+
+  it("대기가 끝나지 않고 돌아오면 계획이 멈췄다고 알린다", async () => {
+    vi.useFakeTimers();
+    const { events, call, tools } = await setup(true, 50, true);
+    await produce(call);
+    await call("execute_altering", { displayName: "철괴(철 광석)", count: 3 });
+    const waiting = call("wait_altering", { displayName: "철괴(철 광석)" });
+    await vi.advanceTimersByTimeAsync(0);
+    await tools.cancel();
+    await vi.advanceTimersByTimeAsync(0);
+    await waiting;
+    expect(events.filter((e) => e.kind === "plan_ended")).toEqual([{ kind: "plan_ended", reason: "stopped" }]);
+  });
+
+  it("단계 지시 중 propose_plan이 승인되면 앞 계획이 대체됐다고 알린다", async () => {
+    const { events, call, propose } = await setup(true, 50, true);
+    await produce(call);
+    await propose([{ tool: "execute_gathering", displayName: "철 광석", times: 1 }]);
+    expect(events.filter((e) => e.kind === "plan_ended")).toEqual([{ kind: "plan_ended", reason: "replaced" }]);
+  });
+
+  it("단계 지시가 없을 때의 propose_plan은 계획 끝남을 알리지 않는다", async () => {
+    const { events, propose } = await setup(true, 50, true);
+    await propose([{ tool: "execute_gathering", displayName: "철 광석", times: 1 }]);
+    await propose([{ tool: "execute_gathering", displayName: "철 광석", times: 1 }]);
+    expect(events.filter((e) => e.kind === "plan_ended")).toEqual([]);
+  });
+
   it("거부된 단계는 넘어가지 않는다", async () => {
     const { call } = await setup(true, 50, true);
     const { next_step } = await produce(call);

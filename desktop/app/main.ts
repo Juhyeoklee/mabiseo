@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { fileURLToPath } from "node:url";
 import type { Report, ServerView } from "../server/server.js";
 import { parseArgs, start, usage, type Started } from "../start.js";
-import { accountAction, accountRow, appendLog, rows, stamp, type Account, type Pairing } from "./view.js";
+import { accountAction, accountRow, appendLog, card, chips, clock, progressLines, rows, type Account, type Line, type Pairing, type Screen } from "./view.js";
 
 // app/main.ts가 아니라 번들(app/dist/main.mjs) 자리 기준이다
 const recordings = fileURLToPath(new URL("../../../recordings/", import.meta.url));
@@ -13,11 +13,24 @@ let window: BrowserWindow | undefined;
 let pairing: Pairing | undefined;
 let view: ServerView | undefined;
 let account: Account | undefined;
-let log: string[] = [];
+let log: Line[] = [];
 
 function push(): void {
   if (!window || !pairing || !view || !account) return;
-  window.webContents.send("screen", { rows: [accountRow(account), ...rows(view, pairing)], action: accountAction(account), log });
+  const screen: Screen = {
+    chips: chips(view, pairing, account),
+    rows: [accountRow(account), ...rows(view, pairing)],
+    action: accountAction(account),
+    card: card(view.task),
+    asking: view.asking,
+    log,
+  };
+  window.webContents.send("screen", screen);
+}
+
+function record(text: string): void {
+  console.log(`[로그] ${text}`);
+  log = appendLog(log, { at: clock(new Date()), text });
 }
 
 let auth: Started["auth"] | undefined;
@@ -53,13 +66,14 @@ async function signOut(): Promise<void> {
 
 const report: Report = {
   view: (next) => {
+    for (const line of progressLines(view?.task, next.task)) record(line);
     view = next;
     // 요청 중 갱신이 거절되면 토큰이 지워진다. 요청이 끝날 때마다 다시 읽는다
-    void refreshAccount();
+    if (next.asking) push();
+    else void refreshAccount();
   },
   log: (line) => {
-    console.log(`[로그] ${line}`);
-    log = appendLog(log, stamp(line, new Date()));
+    record(line);
     push();
   },
 };
@@ -80,6 +94,7 @@ async function main(argv: string[]): Promise<void> {
   console.log(`[대기] ${started.pcName} · 포트 ${started.server.port} · 페어링 코드 ${args.code}${args.trace ? ` · 추적 ${args.trace}` : ""}`);
 
   ipcMain.on("recheck", () => void started.server.recheck());
+  ipcMain.on("stop", () => started.server.stopRequest());
   ipcMain.on("login", () => void signIn());
   ipcMain.on("logout", () => void signOut());
   app.on("window-all-closed", () => {
@@ -88,8 +103,10 @@ async function main(argv: string[]): Promise<void> {
   });
 
   window = new BrowserWindow({
-    width: 460,
-    height: 600,
+    width: 860,
+    height: 680,
+    minWidth: 420,
+    minHeight: 480,
     title: "마비서",
     webPreferences: { preload, contextIsolation: true, sandbox: true },
   });

@@ -342,6 +342,8 @@ private struct EntryView: View {
       }
     case .agent(.planStep):
       EmptyView()
+    case .agent(.planEnded(let reason)):
+      if let text = PlanText.ended(reason) { caption(text) }
     case .agent(.failed(let reason)):
       caption(failureText(reason)).foregroundStyle(.red)
     }

@@ -18,7 +18,9 @@ const outline: Outline = {
 
 function guided() {
   const reports: [number, number][] = [];
-  const plan = new Plan((done, remaining) => reports.push([done, remaining]));
+  const plan = new Plan((event) => {
+    if (event.kind === "plan_step") reports.push([event.done, event.remainingSeconds]);
+  });
   plan.guide("철괴", steps, outline);
   return { plan, reports };
 }

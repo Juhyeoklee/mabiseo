@@ -1,0 +1,9 @@
+{
+  "type": "event",
+  "id": "a1",
+  "seq": 9,
+  "event": {
+    "kind": "plan_ended",
+    "reason": "replaced"
+  }
+}

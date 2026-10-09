@@ -8,6 +8,7 @@ export type AgentEvent =
   | { kind: "tool_result"; text: string }
   | { kind: "progress"; activity: string; elapsedSeconds: number }
   | { kind: "plan_step"; done: number; remainingSeconds: number }
+  | { kind: "plan_ended"; reason: "done" | "stopped" | "replaced" }
   | { kind: "done"; text: string; turns: number; costUsd: number }
   | { kind: "failed"; reason: string };
 
