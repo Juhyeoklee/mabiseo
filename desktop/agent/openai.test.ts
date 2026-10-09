@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { FakeConnector } from "../connector/fake.js";
 import { Tools } from "../tools/tools.js";
-import { signedOutReason, type AgentEvent, type Auth } from "./agent.js";
+import { signedOutReason, type AgentEvent, type Auth, type Usage } from "./agent.js";
 import type { Approve } from "./handlers.js";
 import { OpenAiAgent } from "./openai.js";
 
@@ -12,11 +12,11 @@ type Item = Record<string, unknown>;
 
 interface Sent {
   authorization: string | null;
-  body: { input: Item[]; tools: Item[]; store: boolean; stream: boolean };
+  body: { model: string; input: Item[]; tools: Item[]; store: boolean; stream: boolean };
 }
 
-function sse(items: Item[]): string {
-  const events = [...items.map((item) => ({ type: "response.output_item.done", item })), { type: "response.completed", response: { output: [] } }];
+function sse(items: Item[], usage?: object): string {
+  const events = [...items.map((item) => ({ type: "response.output_item.done", item })), { type: "response.completed", response: { output: [], ...(usage && { usage }) } }];
   return events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
 }
 
@@ -43,13 +43,14 @@ function auth(signedIn: boolean): Auth {
   };
 }
 
-async function ask(responses: string[], options: { signedIn?: boolean; approve?: Approve; wings?: number } = {}) {
+async function ask(responses: string[], options: { signedIn?: boolean; approve?: Approve; wings?: number; model?: string } = {}) {
   const { fetch, sent } = scripted(responses);
-  const agent = new OpenAiAgent({ auth: auth(options.signedIn ?? true), fetch });
+  const agent = new OpenAiAgent({ auth: auth(options.signedIn ?? true), fetch, ...(options.model && { model: options.model }) });
   const events: AgentEvent[] = [];
+  const usages: Usage[] = [];
   const tools = new Tools(await FakeConnector.fromDirectory(dir), options.wings ?? 10);
-  await agent.ask("날개 몇 개야", { tools, approve: options.approve ?? (async () => true), onEvent: (e) => events.push(e) });
-  return { events, sent };
+  await agent.ask("날개 몇 개야", { tools, approve: options.approve ?? (async () => true), onEvent: (e) => events.push(e), onUsage: (u) => usages.push(u) });
+  return { events, sent, usages };
 }
 
 describe("OpenAI 구현은 Responses 스트림으로 도구를 돌린다", () => {
@@ -79,6 +80,22 @@ describe("OpenAI 구현은 Responses 스트림으로 도구를 돌린다", () =>
       type: "function",
       parameters: { type: "object", required: ["displayName"], properties: { displayName: { type: "string" } } },
     });
+  });
+
+  it("응답마다 완료 event의 토큰 사용량을 입력 · 캐시 · 출력으로 알린다", async () => {
+    const first = { input_tokens: 5200, input_tokens_details: { cached_tokens: 0 }, output_tokens: 40 };
+    const second = { input_tokens: 5400, input_tokens_details: { cached_tokens: 5100 }, output_tokens: 25 };
+    const { usages } = await ask([sse([call("get_currencies", {})], first), sse([say("끝")], second)]);
+    expect(usages).toEqual([
+      { input: 5200, cached: 0, output: 40 },
+      { input: 5400, cached: 5100, output: 25 },
+    ]);
+  });
+
+  it("고른 모델로 요청하고 시작 event에 그 모델을 싣는다", async () => {
+    const { sent, events } = await ask([sse([say("끝")])], { model: "gpt-5.6-terra" });
+    expect(sent[0]?.body.model).toBe("gpt-5.6-terra");
+    expect(events[0]).toEqual({ kind: "started", model: "gpt-5.6-terra" });
   });
 
   it("요청마다 자격을 새로 받아 Authorization에 싣는다", async () => {

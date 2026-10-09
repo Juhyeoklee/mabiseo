@@ -21,6 +21,7 @@ export type PlanEnd = z.infer<typeof planEnd>;
 export const phoneMessage = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("pair"), code: z.string() }),
   z.strictObject({ type: z.literal("ask"), id: z.string(), text: z.string() }),
+  z.strictObject({ type: z.literal("make"), id: z.string(), item: z.string(), count: z.int().positive() }),
   z.strictObject({ type: z.literal("approve"), id: z.string(), allow: z.boolean() }),
   z.strictObject({ type: z.literal("cancel"), id: z.string() }),
 ]);
