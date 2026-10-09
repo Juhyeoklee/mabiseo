@@ -1,5 +1,5 @@
 import type { Connector, Json } from "./connector.js";
-import { recipes, type Recipe } from "./recipes.js";
+import { recipes, type Ingredient, type Recipe } from "./recipes.js";
 
 interface Work {
   recipe: Recipe;
@@ -35,7 +35,7 @@ export class Workshop implements Connector {
       case "execute_gathering":
         return this.gather(String(parse(body).displayName), timeoutMs);
       case "get_alterable_items":
-        return { items: recipes.filter((r) => matches(body, r.name, r.ingredient)).map((r) => this.alterable(r)) };
+        return { items: recipes.filter((r) => matches(body, r.name, ...r.ingredients.map((i) => i.item))).map((r) => this.alterable(r)) };
       case "execute_altering":
         return this.alter(String(parse(body).displayName));
       case "get_altering_works":
@@ -78,21 +78,25 @@ export class Workshop implements Connector {
   }
 
   private alterable(recipe: Recipe): Json {
-    const owned = this.stock.get(recipe.ingredient) ?? 0;
-    if (owned >= recipe.required) return { DisplayName: recipe.name, Alterable: true, ProducedPerWork: recipe.produced };
+    const missing = this.missing(recipe);
+    if (!missing.length) return { DisplayName: recipe.name, Alterable: true, ProducedPerWork: recipe.produced };
     return {
       DisplayName: recipe.name,
       Alterable: false,
       ProducedPerWork: recipe.produced,
       Reason: "not_enough_ingredient",
-      MissingIngredients: [{ DisplayName: recipe.ingredient, Required: recipe.required, Owned: owned }],
+      MissingIngredients: missing.map((i) => ({ DisplayName: i.item, Required: i.required, Owned: this.stock.get(i.item) ?? 0 })),
     };
+  }
+
+  private missing(recipe: Recipe): Ingredient[] {
+    return recipe.ingredients.filter((i) => (this.stock.get(i.item) ?? 0) < i.required);
   }
 
   private alter(displayName: string): Json {
     const recipe = recipes.find((r) => r.name === displayName);
     if (!recipe) return rejected("not_found", `No altering recipe named ${displayName}.`);
-    if ((this.stock.get(recipe.ingredient) ?? 0) < recipe.required) return rejected("not_enough_ingredient", "Not enough ingredients.");
+    if (this.missing(recipe).length) return rejected("not_enough_ingredient", "Not enough ingredients.");
     const queued = this.works.filter((w) => w.recipe.facility === recipe.facility);
     if (queued.length >= queueSlots) {
       return {
@@ -102,7 +106,7 @@ export class Workshop implements Connector {
         cost: this.pay(),
       };
     }
-    this.add(recipe.ingredient, -recipe.required);
+    for (const i of recipe.ingredients) this.add(i.item, -i.required);
     const startAt = Math.max(this.now(), ...queued.map((w) => w.doneAt));
     this.works.push({ recipe, doneAt: startAt + recipe.seconds * 1000 });
     return {

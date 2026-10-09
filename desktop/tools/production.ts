@@ -59,8 +59,10 @@ interface Planned {
 
 function make(recipe: Recipe, count: number, left: Map<string, number>, gatherable: readonly string[], planned: Planned[]): string | undefined {
   const works = Math.ceil(count / recipe.produced);
-  const missing = supply(recipe.ingredient, works * recipe.required, left, gatherable, planned);
-  if (missing) return missing;
+  for (const ingredient of recipe.ingredients) {
+    const missing = supply(ingredient.item, works * ingredient.required, left, gatherable, planned);
+    if (missing) return missing;
+  }
   const displayName = recipe.name;
   const made = { item: recipe.item, facility: recipe.facility, wings: 0 };
   for (let queued = 0; queued < works; queued += queueSlots) {

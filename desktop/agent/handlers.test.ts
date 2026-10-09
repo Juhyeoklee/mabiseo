@@ -27,7 +27,7 @@ interface Asked {
 
 async function setup(decision: boolean, wings = 10, workshop = false) {
   const recorded = await FakeConnector.fromDirectory(dir);
-  const connector = new Counting(workshop ? new Workshop(recorded, { "철 광석": 40 }, 100) : recorded);
+  const connector = new Counting(workshop ? new Workshop(recorded, { "철 광석": 40, 석탄: 12 }, 100) : recorded);
   const requests: Asked[] = [];
   const outlines: (Outline | undefined)[] = [];
   const events: AgentEvent[] = [];
