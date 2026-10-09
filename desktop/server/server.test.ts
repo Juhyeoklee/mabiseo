@@ -441,7 +441,7 @@ describe("승인", () => {
   });
 
   test("생산 계획이 내는 단계 모양은 프로토콜의 plan 계약을 그대로 통과한다", () => {
-    const production = productionSteps("강철괴", 24, new Map(), ["철 광석"]);
+    const production = productionSteps("강철괴", 24, new Map(), ["철 광석", "석탄"]);
     if (!("outline" in production)) throw new Error("계획이 서지 않았다");
     expect(plan.parse(production.outline)).toEqual(production.outline);
   });

@@ -26,12 +26,24 @@ describe("가짜 작업장은 재료 · 대기열 · 날개를 기억한다", ()
           Alterable: false,
           ProducedPerWork: 3,
           Reason: "not_enough_ingredient",
-          MissingIngredients: [{ DisplayName: "철괴", Required: 3, Owned: 0 }],
+          MissingIngredients: [
+            { DisplayName: "철괴", Required: 3, Owned: 0 },
+            { DisplayName: "석탄", Required: 4, Owned: 0 },
+          ],
         },
       ],
     });
     expect(await run("execute_altering", steelIngot)).toMatchObject({ error: "not_enough_ingredient" });
     expect(await run("get_currencies")).toContainEqual(expect.objectContaining({ DisplayName: "정령의 날개", Amount: 100 }));
+  });
+
+  it("재료가 여럿이면 모자란 재료만 목록에 나오고, 다 갖춰 등록하면 재료마다 줄어든다", async () => {
+    const { run } = await workshop({ 철괴: 3, 석탄: 2 });
+    expect(await run("get_alterable_items", "강철괴")).toMatchObject({ items: [{ MissingIngredients: [{ DisplayName: "석탄", Required: 4, Owned: 2 }] }] });
+    await run("execute_gathering", JSON.stringify({ displayName: "석탄" }));
+    expect(await run("execute_altering", steelIngot)).toMatchObject({ result: "started" });
+    expect(await run("get_items", JSON.stringify({ name: "철괴" }))).toEqual([]);
+    expect(await run("get_items", JSON.stringify({ name: "석탄" }))).toEqual([expect.objectContaining({ DisplayName: "석탄", Count: 98 })]);
   });
 
   it("가공 목록의 필터는 재료 이름에도 걸린다", async () => {
@@ -75,7 +87,7 @@ describe("가짜 작업장은 재료 · 대기열 · 날개를 기억한다", ()
   });
 
   it("그 가공이 아직 진행 중이면 수령은 not_completed_yet이고, 다 끝나면 시설의 완료분을 모두 받아 가진 수에 더한다", async () => {
-    const { clock, run } = await workshop({ "철 광석": 20 });
+    const { clock, run } = await workshop({ "철 광석": 20, 석탄: 4 });
     await run("execute_altering", ironIngot);
     await run("execute_altering", ironIngot);
     clock.now = 30_000;
