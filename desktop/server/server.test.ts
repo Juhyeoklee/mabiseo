@@ -8,7 +8,7 @@ import { FakeConnector } from "../connector/fake.js";
 import { readJson } from "../connector/recordings.js";
 import { productionSteps, type Outline } from "../tools/production.js";
 import { Tools } from "../tools/tools.js";
-import { Server, type Ask, type Report, type ServerView } from "./server.js";
+import { Server, type Ask, type Make, type Report, type ServerView } from "./server.js";
 
 const recordings = fileURLToPath(new URL("../../recordings/", import.meta.url));
 const code = "482913";
@@ -61,6 +61,14 @@ class Phone {
     this.socket.close();
   }
 }
+
+const unusedMake: Make = async () => {
+  throw new Error("make는 이 테스트에서 불리지 않는다");
+};
+
+const unusedAsk: Ask = async () => {
+  throw new Error("ask는 이 테스트에서 불리지 않는다");
+};
 
 const echoAsk: Ask = async (prompt, session) => {
   session.onEvent({ kind: "started", model: "fake" });
@@ -129,10 +137,10 @@ class Notes implements Report {
   }
 }
 
-async function serve(ask: Ask, fail?: "login" | "offline"): Promise<{ server: Server; tools: Tools; notes: Notes }> {
+async function serve(ask: Ask, fail?: "login" | "offline", make: Make = unusedMake): Promise<{ server: Server; tools: Tools; notes: Notes }> {
   const tools = new Tools(await FakeConnector.fromDirectory(recordings, fail), 10);
   const notes = new Notes();
-  const server = await Server.start({ port: 0, code, pcName, tools, ask, report: notes });
+  const server = await Server.start({ port: 0, code, pcName, tools, ask, make, report: notes });
   return { server, tools, notes };
 }
 
@@ -203,7 +211,7 @@ describe("대화", () => {
       },
     };
     const tools = new Tools(connector, 10);
-    const server = await Server.start({ port: 0, code, pcName, tools, ask: echoAsk, report: new Notes() });
+    const server = await Server.start({ port: 0, code, pcName, tools, ask: echoAsk, make: unusedMake, report: new Notes() });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     for (const id of ["a1", "a2"]) {
@@ -320,7 +328,7 @@ describe("대화", () => {
       session.onEvent({ kind: "done", text: prompt, turns: 1, costUsd: 0 });
     };
     const notes = new Notes();
-    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: recordingAsk, report: notes });
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: recordingAsk, make: unusedMake, report: notes });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     phone.send({ type: "ask", id: "a1", text: "첫째" });
@@ -598,7 +606,7 @@ describe("중단", () => {
   async function serveGathering(): Promise<{ server: Server; tools: Tools; connector: Gathering }> {
     const connector = await Gathering.load();
     const tools = new Tools(connector, 10);
-    const server = await Server.start({ port: 0, code, pcName, tools, ask: gatheringUntilStopped, report: new Notes() });
+    const server = await Server.start({ port: 0, code, pcName, tools, ask: gatheringUntilStopped, make: unusedMake, report: new Notes() });
     return { server, tools, connector };
   }
 
@@ -682,7 +690,7 @@ describe("중단", () => {
       await gatheringUntilStopped(prompt, session);
     };
     const connector = await Gathering.load();
-    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask, report: new Notes() });
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask, make: unusedMake, report: new Notes() });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     phone.send({ type: "ask", id: "a1", text: "통나무 채집해" });
@@ -697,7 +705,7 @@ describe("중단", () => {
   test("활동이 없으면 cancel은 stop_action을 보내지 않는다", async () => {
     const connector = new Counting(await FakeConnector.fromDirectory(recordings));
     const tools = new Tools(connector, 10);
-    const server = await Server.start({ port: 0, code, pcName, tools, ask: hangingAsk, report: new Notes() });
+    const server = await Server.start({ port: 0, code, pcName, tools, ask: hangingAsk, make: unusedMake, report: new Notes() });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
@@ -950,7 +958,7 @@ describe("상태 창 보고", () => {
       "요청: 채집해 줘",
       "승인 요청: execute_gathering · 날개 5",
       "승인 허용",
-      "끝: 완료 · 1턴",
+      "끝: 완료 · 1턴 · 토큰 입력 0 (캐시 0) · 출력 0",
     ]);
     phone.close();
     await server.close();
@@ -966,7 +974,59 @@ describe("상태 창 보고", () => {
     await phone.pair();
     phone.send({ type: "ask", id: "a1", text: "내 정보" });
     expect(await phone.next()).toMatchObject({ type: "event", id: "a1", event: { kind: "tool" } });
-    expect(notes.logs).toEqual([`폰 연결: ${phoneAddress}`, "요청: 내 정보", "끝: 완료 · 1턴"]);
+    expect(notes.logs).toEqual([`폰 연결: ${phoneAddress}`, "요청: 내 정보", "끝: 완료 · 1턴 · 토큰 입력 0 (캐시 0) · 출력 0"]);
+    phone.close();
+    await server.close();
+  });
+
+  test("턴마다 토큰 사용량이 로그에 남고 끝 줄에 요청 전체의 합이 붙는다", async () => {
+    const ask: Ask = async (_prompt, session) => {
+      session.onUsage({ input: 1200, cached: 0, output: 80 });
+      session.onUsage({ input: 1500, cached: 1100, output: 40 });
+      session.onEvent({ kind: "done", text: "", turns: 2, costUsd: 0 });
+    };
+    const { server, notes } = await serve(ask);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "날개 몇 개야" });
+    await phone.next();
+    expect(notes.logs).toEqual([
+      `폰 연결: ${phoneAddress}`,
+      "요청: 날개 몇 개야",
+      "토큰: 입력 1200 (캐시 0) · 출력 80",
+      "토큰: 입력 1500 (캐시 1100) · 출력 40",
+      "끝: 완료 · 2턴 · 토큰 입력 2700 (캐시 1100) · 출력 120",
+    ]);
+    phone.close();
+    await server.close();
+  });
+
+  test("제작 요청은 품목과 개수로 제작 실행을 부르고 그 event를 같은 id로 보내며 상태 창에 무엇을 만드는지 보인다", async () => {
+    const made: [string, number][] = [];
+    const make: Make = async (item, count, session) => {
+      made.push([item, count]);
+      session.onEvent({ kind: "done", text: `${item} ${count}개를 만들었어요.`, turns: 0, costUsd: 0 });
+    };
+    const { server, notes } = await serve(unusedAsk, undefined, make);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "make", id: "m1", item: "강철괴", count: 100 });
+    expect(await phone.next()).toEqual({ type: "event", id: "m1", seq: 0, event: { kind: "done", text: "강철괴 100개를 만들었어요.", turns: 0, costUsd: 0 } });
+    expect(made).toEqual([["강철괴", 100]]);
+    expect(notes.views.at(-1)?.task).toMatchObject({ text: "강철괴 100개 만들기", end: "done" });
+    expect(notes.logs).toContain("끝: 완료 · 0턴 · 토큰 입력 0 (캐시 0) · 출력 0");
+    phone.close();
+    await server.close();
+  });
+
+  test("처리 중에 들어온 제작 요청은 busy로 거절된다", async () => {
+    const { server } = await serve(hangingAsk, undefined, unusedMake);
+    const phone = await Phone.connect(server.port);
+    await phone.pair();
+    phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
+    await phone.next();
+    phone.send({ type: "make", id: "m1", item: "강철괴", count: 100 });
+    expect(await phone.next()).toEqual({ type: "event", id: "m1", seq: 0, event: { kind: "failed", reason: "busy" } });
     phone.close();
     await server.close();
   });
@@ -1104,7 +1164,7 @@ describe("상태 창 보고", () => {
       run: async () => (calls++ === 0 ? { pipe: "connected" } : { pipe: "disconnected", reason: "game_off" }),
     };
     const notes = new Notes();
-    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: echoAsk, report: notes });
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: echoAsk, make: unusedMake, report: notes });
     expect(server.view().connector).toBe("connected");
     const phone = await Phone.connect(server.port);
     await phone.pair();
@@ -1121,7 +1181,7 @@ describe("상태 창 보고", () => {
   test("요청이 도는 동안 recheck는 CLI를 부르지 않고 나중에 확인한다고 로그를 남긴다", async () => {
     const connector = new Counting(await FakeConnector.fromDirectory(recordings));
     const notes = new Notes();
-    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: hangingAsk, report: notes });
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: hangingAsk, make: unusedMake, report: notes });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     phone.send({ type: "ask", id: "a1", text: "오래 걸리는 일" });
@@ -1151,7 +1211,7 @@ describe("상태 창 보고", () => {
       session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
     };
     const notes = new Notes();
-    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: watchingAsk, report: notes });
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: watchingAsk, make: unusedMake, report: notes });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     const rechecked = server.recheck();
@@ -1160,7 +1220,7 @@ describe("상태 창 보고", () => {
     expect(started).toBe(false);
     held.open();
     await rechecked;
-    await notes.until(() => notes.logs.includes("끝: 완료 · 1턴"));
+    await notes.until(() => notes.logs.includes("끝: 완료 · 1턴 · 토큰 입력 0 (캐시 0) · 출력 0"));
     expect(started).toBe(true);
     phone.close();
     await server.close();
@@ -1181,7 +1241,7 @@ describe("상태 창 보고", () => {
       session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
     };
     const notes = new Notes();
-    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: watchingAsk, report: notes });
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: watchingAsk, make: unusedMake, report: notes });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     const rechecked = server.recheck();
@@ -1193,7 +1253,7 @@ describe("상태 창 보고", () => {
     expect(started).toBe(false);
     held.open();
     await rechecked;
-    await notes.until(() => notes.logs.includes("끝: 완료 · 1턴"));
+    await notes.until(() => notes.logs.includes("끝: 완료 · 1턴 · 토큰 입력 0 (캐시 0) · 출력 0"));
     expect(started).toBe(true);
     phone.close();
     other.close();
@@ -1215,7 +1275,7 @@ describe("상태 창 보고", () => {
       session.onEvent({ kind: "done", text: "", turns: 1, costUsd: 0 });
     };
     const notes = new Notes();
-    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: watchingAsk, report: notes });
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: watchingAsk, make: unusedMake, report: notes });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     const rechecked = server.recheck();
@@ -1240,7 +1300,7 @@ describe("상태 창 보고", () => {
       },
     };
     const notes = new Notes();
-    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: echoAsk, report: notes });
+    const server = await Server.start({ port: 0, code, pcName, tools: new Tools(connector, 10), ask: echoAsk, make: unusedMake, report: notes });
     const phone = await Phone.connect(server.port);
     await phone.pair();
     const seen = notes.logs.length;

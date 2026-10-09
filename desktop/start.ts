@@ -1,14 +1,15 @@
 import { randomInt } from "node:crypto";
 import { hostname } from "node:os";
 import type { Auth } from "./agent/agent.js";
-import { providerFlags, selectAgent, type Provider } from "./agent/select.js";
+import { make } from "./agent/make.js";
+import { providerFlags, selectAgents, type Provider } from "./agent/select.js";
 import type { FailMode } from "./connector/connector.js";
-import { chooseConnector, selectConnector, type ConnectorChoice } from "./connector/select.js";
+import { chooseConnector, selectConnector, workshopFlags, type ConnectorChoice } from "./connector/select.js";
 import { advertise } from "./server/bonjour.js";
 import { Server, type Report } from "./server/server.js";
 import { Tools } from "./tools/tools.js";
 
-export const usage = "사용법: npm run serve|app -- [--provider=openai|claude] [--fail=login|offline | --workshop | --real] [--wings=N] [--port=N] [--code=NNNNNN] [--trace=DIR]";
+export const usage = "사용법: npm run serve|app -- [--provider=openai|claude] [--fail=login|offline | --workshop[=fast] | --real] [--wings=N] [--port=N] [--code=NNNNNN] [--trace=DIR]";
 const failFlags: Readonly<Record<string, FailMode>> = { "--fail=login": "login", "--fail=offline": "offline" };
 
 export interface Args {
@@ -23,7 +24,7 @@ export interface Args {
 export function parseArgs(argv: string[]): Args | undefined {
   let fail: FailMode | undefined;
   let real = false;
-  let workshop = false;
+  let workshop: number | undefined;
   let wings = 10;
   let port = 7470;
   let code = randomInt(0, 1_000_000).toString().padStart(6, "0");
@@ -34,7 +35,7 @@ export function parseArgs(argv: string[]): Args | undefined {
     if (mode) fail = mode;
     else if (providerFlags[arg]) provider = providerFlags[arg];
     else if (arg === "--real") real = true;
-    else if (arg === "--workshop") workshop = true;
+    else if (workshopFlags[arg] !== undefined) workshop = workshopFlags[arg];
     else if (arg.startsWith("--wings=")) wings = Number(arg.slice("--wings=".length));
     else if (arg.startsWith("--port=")) port = Number(arg.slice("--port=".length));
     else if (arg.startsWith("--code=")) code = arg.slice("--code=".length);
@@ -57,13 +58,21 @@ export interface Started {
 export async function start(args: Args, recordings: string, report: Report): Promise<Started> {
   const pcName = hostname().replace(/\.local$/, "");
   const tools = new Tools(await selectConnector(args.connector, recordings, args.trace), args.wings);
-  const agent = selectAgent(args.provider);
-  const server = await Server.start({ port: args.port, code: args.code, pcName, tools, ask: (prompt, session) => agent.ask(prompt, session), report });
+  const agents = selectAgents(args.provider);
+  const server = await Server.start({
+    port: args.port,
+    code: args.code,
+    pcName,
+    tools,
+    ask: (prompt, session) => agents.mid.ask(prompt, session),
+    make: (item, count, session) => make(item, count, session, agents),
+    report,
+  });
   const stopAdvertising = advertise(pcName, server.port);
   return {
     server,
     pcName,
-    auth: agent.auth,
+    auth: agents.mid.auth,
     stop: async () => {
       await stopAdvertising();
       await server.close();

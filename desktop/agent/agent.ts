@@ -12,10 +12,17 @@ export type AgentEvent =
   | { kind: "done"; text: string; turns: number; costUsd: number }
   | { kind: "failed"; reason: string };
 
+export interface Usage {
+  input: number;
+  cached: number;
+  output: number;
+}
+
 export interface Session {
   tools: Tools;
   approve: Approve;
   onEvent: (event: AgentEvent) => void;
+  onUsage: (usage: Usage) => void;
   abort?: AbortController;
 }
 

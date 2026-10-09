@@ -1,11 +1,12 @@
 public enum PhoneMessage: Codable, Equatable, Sendable {
   case pair(code: String)
   case ask(id: String, text: String)
+  case make(id: String, item: String, count: Int)
   case approve(id: String, allow: Bool)
   case cancel(id: String)
 
   private enum Key: String, CodingKey {
-    case type, code, id, text, allow
+    case type, code, id, text, item, count, allow
   }
 
   public init(from decoder: Decoder) throws {
@@ -17,6 +18,12 @@ public enum PhoneMessage: Codable, Equatable, Sendable {
     case "ask":
       try rejectUnknownKeys(in: decoder, allowed: [Key.type, .id, .text])
       self = .ask(id: try container.decode(String.self, forKey: .id), text: try container.decode(String.self, forKey: .text))
+    case "make":
+      try rejectUnknownKeys(in: decoder, allowed: [Key.type, .id, .item, .count])
+      self = .make(
+        id: try container.decode(String.self, forKey: .id),
+        item: try container.decode(String.self, forKey: .item),
+        count: try container.decode(Int.self, forKey: .count))
     case "approve":
       try rejectUnknownKeys(in: decoder, allowed: [Key.type, .id, .allow])
       self = .approve(id: try container.decode(String.self, forKey: .id), allow: try container.decode(Bool.self, forKey: .allow))
@@ -38,6 +45,11 @@ public enum PhoneMessage: Codable, Equatable, Sendable {
       try container.encode("ask", forKey: .type)
       try container.encode(id, forKey: .id)
       try container.encode(text, forKey: .text)
+    case .make(let id, let item, let count):
+      try container.encode("make", forKey: .type)
+      try container.encode(id, forKey: .id)
+      try container.encode(item, forKey: .item)
+      try container.encode(count, forKey: .count)
     case .approve(let id, let allow):
       try container.encode("approve", forKey: .type)
       try container.encode(id, forKey: .id)

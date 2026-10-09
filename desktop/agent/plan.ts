@@ -87,6 +87,10 @@ export class Plan {
     return false;
   }
 
+  remaining(): Record<string, number> {
+    return Object.fromEntries(totals(this.#guide.flatMap(toPlanSteps)));
+  }
+
   take(spec: ToolSpec, input: ToolInput): boolean {
     const key = stepKey(spec.name, String(input.displayName));
     const left = this.#left.get(key) ?? 0;

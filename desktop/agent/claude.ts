@@ -1,5 +1,5 @@
 import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { maxTurns, signedOutReason, systemPrompt, type Agent, type AgentEvent, type Auth, type AuthState, type Session } from "./agent.js";
+import { maxTurns, signedOutReason, systemPrompt, type Agent, type AgentEvent, type Auth, type AuthState, type Session, type Usage } from "./agent.js";
 import { allowedToolNames, mcpServer, serverName, shortName } from "./mcp.js";
 
 const model = "claude-sonnet-5-5";
@@ -41,6 +41,7 @@ export class ClaudeAgent implements Agent {
     const unwatch = session.tools.watch((progress) => session.onEvent({ kind: "progress", ...progress }));
     try {
       for await (const message of stream) {
+        if (message.type === "result") session.onUsage(usage(message.usage));
         for (const event of events(message)) session.onEvent(event);
       }
     } finally {
@@ -73,6 +74,11 @@ function events(message: SDKMessage): AgentEvent[] {
     default:
       return [];
   }
+}
+
+function usage(total: Extract<SDKMessage, { type: "result" }>["usage"]): Usage {
+  const cached = total.cache_read_input_tokens;
+  return { input: total.input_tokens + cached + total.cache_creation_input_tokens, cached, output: total.output_tokens };
 }
 
 function resultText(content: unknown): string {

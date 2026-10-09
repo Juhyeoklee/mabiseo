@@ -234,8 +234,9 @@ export function field(response: Json, name: string): Json | undefined {
   return typeof response === "object" && response !== null && !Array.isArray(response) ? response[name] : undefined;
 }
 
-function isRefused(response: Json): boolean {
-  return typeof field(response, "error") === "string" || field(response, "pipe") === "disconnected";
+export function isRefused(response: unknown): boolean {
+  if (typeof response !== "object" || response === null) return false;
+  return ("error" in response && typeof response.error === "string") || ("pipe" in response && response.pipe === "disconnected");
 }
 
 // 거부 모양은 시작 전과 시작 후가 같다(execute_gathering.unknown-name.json · capabilities.json의 timeout · canceled).

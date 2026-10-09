@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 import { agentEvent, desktopMessage, phoneMessage, type ConnectorState, type DesktopMessage, type PhoneMessage, type Plan } from "../../protocol/messages.js";
-import type { Agent, AgentEvent } from "../agent/agent.js";
+import type { Agent, AgentEvent, Session, Usage } from "../agent/agent.js";
 import type { Json } from "../connector/connector.js";
 import type { Outline } from "../tools/production.js";
 import type { ToolInput, Tools } from "../tools/tools.js";
 
 export type Ask = Agent["ask"];
+
+export type Make = (item: string, count: number, session: Session) => Promise<void>;
 
 export interface ServerView {
   connector: ConnectorState;
@@ -41,6 +43,7 @@ export interface ServerOptions {
   pcName: string;
   tools: Tools;
   ask: Ask;
+  make: Make;
   report: Report;
 }
 
@@ -133,7 +136,11 @@ export class Server {
     if (!this.paired.has(socket)) return socket.close(policyViolation);
     switch (message.type) {
       case "ask":
-        return this.ask(socket, message.id, message.text);
+        return this.start(socket, message.id, message.text, (session) => this.options.ask(message.text, session));
+      case "make":
+        return this.start(socket, message.id, `${message.item} ${message.count}개 만들기`, (session) =>
+          this.options.make(message.item, message.count, session),
+        );
       case "approve":
         return this.answer(message.id, message.allow);
       case "cancel":
@@ -164,7 +171,7 @@ export class Server {
     this.options.report.view(this.view());
   }
 
-  private async ask(socket: WebSocket, id: string, text: string): Promise<void> {
+  private async start(socket: WebSocket, id: string, text: string, work: (session: Session) => Promise<void>): Promise<void> {
     this.options.report.log(`요청: ${text}`);
     if (this.last?.id === id) {
       this.options.report.log("요청 거절: 직전 요청과 같은 id");
@@ -181,6 +188,7 @@ export class Server {
     // 상태 조회는 tools/의 재거부 차단을 푼다. 페어링 · recheck · 앞 요청의 마무리가 시작한 조회가 모두 끝난 뒤에 에이전트를 띄운다
     await this.refreshing;
     let ended = false;
+    const used: Usage = { input: 0, cached: 0, output: 0 };
     const emit = (event: AgentEvent): void => {
       if (ended) return;
       // 취소가 대기를 풀면 계획은 대기가 끝나지 않았다고 끝남을 알린다. 끝난 까닭은 뒤따르는 cancelled가 말한다
@@ -190,16 +198,22 @@ export class Server {
       const recorded: AgentEvent = cancelled ? { kind: "failed", reason: "cancelled" } : event;
       run.events.push(recorded);
       this.broadcast(eventMessage(id, run.events.length - 1, recorded));
-      const line = eventLine(recorded);
+      const line = eventLine(recorded, used);
       if (line) this.options.report.log(line);
       this.follow(run, recorded);
     };
     try {
       if (!run.abort.signal.aborted) {
-        await this.options.ask(text, {
+        await work({
           tools: this.options.tools,
           approve: (name, input, wings, plan) => this.approve(run, name, input, wings, plan),
           onEvent: emit,
+          onUsage: (usage) => {
+            used.input += usage.input;
+            used.cached += usage.cached;
+            used.output += usage.output;
+            this.options.report.log(`토큰: ${tokens(usage)}`);
+          },
           abort: run.abort,
         });
       }
@@ -319,15 +333,19 @@ function connectorState(response: Json): ConnectorState {
   return "connected";
 }
 
-function eventLine(event: AgentEvent): string | undefined {
+function eventLine(event: AgentEvent, used: Usage): string | undefined {
   switch (event.kind) {
     case "done":
-      return `끝: 완료 · ${event.turns}턴${event.costUsd > 0 ? ` · $${event.costUsd.toFixed(3)}` : ""}`;
+      return `끝: 완료 · ${event.turns}턴${event.costUsd > 0 ? ` · $${event.costUsd.toFixed(3)}` : ""} · 토큰 ${tokens(used)}`;
     case "failed":
-      return event.reason === "cancelled" ? "끝: 중단" : `끝: 실패 (${event.reason})`;
+      return event.reason === "cancelled" ? "끝: 중단" : `끝: 실패 (${event.reason}) · 토큰 ${tokens(used)}`;
     default:
       return undefined;
   }
+}
+
+function tokens(usage: Usage): string {
+  return `입력 ${usage.input} (캐시 ${usage.cached}) · 출력 ${usage.output}`;
 }
 
 function decode(raw: string): PhoneMessage | undefined {

@@ -1,17 +1,18 @@
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import type { AgentEvent } from "./agent/agent.js";
-import { providerFlags, selectAgent, type Provider } from "./agent/select.js";
+import type { AgentEvent, Session, Usage } from "./agent/agent.js";
+import { make } from "./agent/make.js";
+import { providerFlags, selectAgents, type Provider, type Tiers } from "./agent/select.js";
 import type { FailMode } from "./connector/connector.js";
-import { chooseConnector, selectConnector, type ConnectorChoice } from "./connector/select.js";
+import { chooseConnector, selectConnector, workshopFlags, type ConnectorChoice } from "./connector/select.js";
 import { Tools } from "./tools/tools.js";
 
 const recordings = fileURLToPath(new URL("../recordings/", import.meta.url));
-const usage = '사용법: npm run ask -- [--provider=openai|claude] [--fail=login|offline | --workshop | --real] [--wings=N] "할 일"';
+const usage = '사용법: npm run ask -- [--provider=openai|claude] [--fail=login|offline | --workshop[=fast] | --real] [--wings=N] "할 일" | --make 품목 개수';
 const failFlags: Readonly<Record<string, FailMode>> = { "--fail=login": "login", "--fail=offline": "offline" };
 
 interface Args {
-  prompt: string;
+  work: (agents: Tiers, session: Session) => Promise<void>;
   connector: ConnectorChoice;
   wings: number;
   provider: Provider;
@@ -20,23 +21,29 @@ interface Args {
 function parseArgs(argv: string[]): Args | undefined {
   let fail: FailMode | undefined;
   let real = false;
-  let workshop = false;
+  let workshop: number | undefined;
   let wings = 10;
   let provider: Provider = "openai";
+  let making = false;
   const words: string[] = [];
   for (const arg of argv) {
     const mode = failFlags[arg];
     if (mode) fail = mode;
     else if (providerFlags[arg]) provider = providerFlags[arg];
     else if (arg === "--real") real = true;
-    else if (arg === "--workshop") workshop = true;
+    else if (workshopFlags[arg] !== undefined) workshop = workshopFlags[arg];
+    else if (arg === "--make") making = true;
     else if (arg.startsWith("--wings=")) wings = Number(arg.slice("--wings=".length));
     else if (arg.startsWith("--")) return undefined;
     else words.push(arg);
   }
   const connector = chooseConnector({ real, workshop, fail });
   if (!words.length || !Number.isInteger(wings) || wings < 0 || !connector) return undefined;
-  return { prompt: words.join(" "), connector, wings, provider };
+  if (!making) return { work: (agents, session) => agents.mid.ask(words.join(" "), session), connector, wings, provider };
+  const count = Number(words.at(-1));
+  const item = words.slice(0, -1).join(" ");
+  if (!item || !Number.isInteger(count) || count < 1) return undefined;
+  return { work: (agents, session) => make(item, count, session, agents), connector, wings, provider };
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -46,12 +53,13 @@ async function main(argv: string[]): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  const { prompt, connector, wings, provider } = args;
+  const { work, connector, wings, provider } = args;
 
   const tools = new Tools(await selectConnector(connector, recordings), wings);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    await selectAgent(provider).ask(prompt, {
+    const used: Usage = { input: 0, cached: 0, output: 0 };
+    await work(selectAgents(provider), {
       tools,
       approve: async (name, input) => {
         try {
@@ -62,6 +70,12 @@ async function main(argv: string[]): Promise<void> {
         }
       },
       onEvent: print,
+      onUsage: (turn) => {
+        used.input += turn.input;
+        used.cached += turn.cached;
+        used.output += turn.output;
+        console.log(`[토큰] 입력 ${turn.input} (캐시 ${turn.cached}) · 출력 ${turn.output} · 누적 입력 ${used.input} (캐시 ${used.cached}) · 출력 ${used.output}`);
+      },
     });
   } finally {
     rl.close();
