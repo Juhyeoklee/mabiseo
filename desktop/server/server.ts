@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
-import { agentEvent, desktopMessage, phoneMessage, type ConnectorState, type DesktopMessage, type PhoneMessage } from "../../protocol/messages.js";
+import { agentEvent, desktopMessage, phoneMessage, type ConnectorState, type DesktopMessage, type PhoneMessage, type Plan } from "../../protocol/messages.js";
 import type { Agent, AgentEvent } from "../agent/agent.js";
 import type { Json } from "../connector/connector.js";
 import type { Outline } from "../tools/production.js";
@@ -13,6 +13,21 @@ export interface ServerView {
   wings: number;
   phones: string[];
   asking: boolean;
+  task: Task | undefined;
+}
+
+export interface Task {
+  text: string;
+  job: Job | undefined;
+  end: "done" | "failed" | "cancelled" | undefined;
+}
+
+export interface Job {
+  planId: string;
+  plan: Plan;
+  done: number;
+  remainingSeconds: number;
+  ended: Extract<AgentEvent, { kind: "plan_ended" }>["reason"] | undefined;
 }
 
 export interface Report {
@@ -36,6 +51,7 @@ interface Run {
   id: string;
   abort: AbortController;
   events: AgentEvent[];
+  approved: { id: string; plan: Plan } | undefined;
 }
 
 interface Approval {
@@ -61,6 +77,7 @@ export class Server {
   private run: Run | undefined;
   private refreshing: Promise<unknown> = Promise.resolve();
   private last: Run | undefined;
+  private task: Task | undefined;
 
   private constructor(
     private readonly wss: WebSocketServer,
@@ -85,6 +102,7 @@ export class Server {
       wings: this.lastStatus.wings,
       phones: [...this.paired.values()],
       asking: this.run !== undefined,
+      task: this.task,
     };
   }
 
@@ -93,6 +111,13 @@ export class Server {
     this.options.report.log("상태 다시 확인");
     this.broadcast(await this.refreshStatus());
     this.options.report.view(this.view());
+  }
+
+  stopRequest(): void {
+    if (!this.run) return;
+    this.options.report.log("PC에서 중단");
+    this.cancel(this.run);
+    this.stopActivity();
   }
 
   async close(): Promise<void> {
@@ -149,14 +174,17 @@ export class Server {
       this.options.report.log("요청 거절: 처리 중인 요청이 있음");
       return send(socket, eventMessage(id, 0, { kind: "failed", reason: "busy" }));
     }
-    const run: Run = { id, abort: new AbortController(), events: [] };
+    const run: Run = { id, abort: new AbortController(), events: [], approved: undefined };
     this.run = this.last = run;
+    this.task = { text, job: undefined, end: undefined };
     this.options.report.view(this.view());
     // 상태 조회는 tools/의 재거부 차단을 푼다. 페어링 · recheck · 앞 요청의 마무리가 시작한 조회가 모두 끝난 뒤에 에이전트를 띄운다
     await this.refreshing;
     let ended = false;
     const emit = (event: AgentEvent): void => {
       if (ended) return;
+      // 취소가 대기를 풀면 계획은 대기가 끝나지 않았다고 끝남을 알린다. 끝난 까닭은 뒤따르는 cancelled가 말한다
+      if (event.kind === "plan_ended" && run.abort.signal.aborted) return;
       const cancelled = event.kind === "failed" && run.abort.signal.aborted;
       ended = event.kind === "done" || event.kind === "failed";
       const recorded: AgentEvent = cancelled ? { kind: "failed", reason: "cancelled" } : event;
@@ -164,6 +192,7 @@ export class Server {
       this.broadcast(eventMessage(id, run.events.length - 1, recorded));
       const line = eventLine(recorded);
       if (line) this.options.report.log(line);
+      this.follow(run, recorded);
     };
     try {
       if (!run.abort.signal.aborted) {
@@ -186,6 +215,31 @@ export class Server {
     this.broadcast(await status);
   }
 
+  private follow(run: Run, event: AgentEvent): void {
+    const task = this.task;
+    if (!task) return;
+    const job = task.job;
+    switch (event.kind) {
+      case "plan_step":
+        if (!run.approved) return;
+        this.task = { ...task, job: { planId: run.approved.id, plan: run.approved.plan, done: event.done, remainingSeconds: event.remainingSeconds, ended: undefined } };
+        break;
+      case "plan_ended":
+        if (!job) return;
+        this.task = { ...task, job: { ...job, ended: event.reason } };
+        break;
+      case "done":
+        this.task = { ...task, end: "done" };
+        break;
+      case "failed":
+        this.task = { ...task, end: event.reason === "cancelled" ? "cancelled" : "failed" };
+        break;
+      default:
+        return;
+    }
+    this.options.report.view(this.view());
+  }
+
   private approve(run: Run, name: string, input: ToolInput, wings: number, plan: Outline | undefined): Promise<boolean> {
     if (run.abort.signal.aborted) return Promise.resolve(false);
     const id = randomUUID();
@@ -200,14 +254,15 @@ export class Server {
         },
       });
       this.broadcast(request);
-      this.options.report.log(`승인 요청: ${name} · 날개 ${request.wings}`);
+      this.options.report.log(`승인 요청: ${plan ? `${plan.item} ${plan.count}개 계획` : name} · 날개 ${request.wings}`);
     });
   }
 
   private answer(id: string, allow: boolean): void {
     const approval = this.approvals.get(id);
     if (!approval) return;
-    this.options.report.log(`${allow ? "승인 허용" : "승인 거절"}: ${approval.request.tool}`);
+    this.options.report.log(allow ? "승인 허용" : "승인 거절");
+    if (allow && approval.request.plan) approval.run.approved = { id, plan: approval.request.plan };
     approval.resolve(allow);
   }
 
@@ -266,12 +321,10 @@ function connectorState(response: Json): ConnectorState {
 
 function eventLine(event: AgentEvent): string | undefined {
   switch (event.kind) {
-    case "tool":
-      return `도구: ${event.name}`;
     case "done":
-      return `끝: 완료 · ${event.turns}턴 · $${event.costUsd.toFixed(3)}`;
+      return `끝: 완료 · ${event.turns}턴${event.costUsd > 0 ? ` · $${event.costUsd.toFixed(3)}` : ""}`;
     case "failed":
-      return `끝: 실패 (${event.reason})`;
+      return event.reason === "cancelled" ? "끝: 중단" : `끝: 실패 (${event.reason})`;
     default:
       return undefined;
   }

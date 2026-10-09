@@ -8,6 +8,12 @@ public enum PairFailure: String, Codable, Sendable {
   case wrongCode = "wrong_code"
 }
 
+public enum PlanEnd: String, Codable, Sendable {
+  case done
+  case stopped
+  case replaced
+}
+
 public enum AgentEvent: Codable, Equatable, Sendable {
   case started(model: String)
   case text(String)
@@ -15,6 +21,7 @@ public enum AgentEvent: Codable, Equatable, Sendable {
   case toolResult(text: String)
   case progress(activity: String, elapsedSeconds: Int)
   case planStep(done: Int, remainingSeconds: Int)
+  case planEnded(reason: PlanEnd)
   case done(text: String, turns: Int, costUsd: Double)
   case failed(reason: String)
 
@@ -47,6 +54,9 @@ public enum AgentEvent: Codable, Equatable, Sendable {
       self = .planStep(
         done: try container.decode(Int.self, forKey: .done),
         remainingSeconds: try container.decode(Int.self, forKey: .remainingSeconds))
+    case "plan_ended":
+      try rejectUnknownKeys(in: decoder, allowed: [Key.kind, .reason])
+      self = .planEnded(reason: try container.decode(PlanEnd.self, forKey: .reason))
     case "done":
       try rejectUnknownKeys(in: decoder, allowed: [Key.kind, .text, .turns, .costUsd])
       self = .done(
@@ -85,6 +95,9 @@ public enum AgentEvent: Codable, Equatable, Sendable {
       try container.encode("plan_step", forKey: .kind)
       try container.encode(done, forKey: .done)
       try container.encode(remainingSeconds, forKey: .remainingSeconds)
+    case .planEnded(let reason):
+      try container.encode("plan_ended", forKey: .kind)
+      try container.encode(reason, forKey: .reason)
     case .done(let text, let turns, let costUsd):
       try container.encode("done", forKey: .kind)
       try container.encode(text, forKey: .text)

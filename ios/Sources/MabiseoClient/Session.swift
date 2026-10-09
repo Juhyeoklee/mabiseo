@@ -172,6 +172,8 @@ public final class Session {
       switch event {
       case .planStep(let done, let remainingSeconds):
         if let plan = approvedPlan { job = Job(plan: plan, done: done, remainingSeconds: remainingSeconds) }
+      case .planEnded:
+        job?.ended = true
       case .done, .failed:
         askId = nil
         approval = nil
@@ -183,7 +185,7 @@ public final class Session {
   }
 
   private func record(_ event: AgentEvent) {
-    if job?.ended == false {
+    if job != nil {
       switch event {
       case .tool, .toolResult, .progress: return
       default: break

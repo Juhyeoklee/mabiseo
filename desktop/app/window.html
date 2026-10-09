@@ -11,6 +11,14 @@
         --text: #1d1d1b;
         --muted: #6b6b66;
         --line: #e2e2dc;
+        --track: #ecece7;
+        --accent: #2f5fb3;
+        --now-bg: #e3eaf7;
+        --now-text: #1f4686;
+        --good: #2e7d3e;
+        --caution: #b07a1e;
+        --bad: #a12a20;
+        --neutral: #9a9a94;
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -19,6 +27,14 @@
           --text: #ececea;
           --muted: #9a9a94;
           --line: #363634;
+          --track: #363634;
+          --accent: #6f9be6;
+          --now-bg: #23314a;
+          --now-text: #b9cdf0;
+          --good: #5cb26c;
+          --caution: #d6a24a;
+          --bad: #e07a6f;
+          --neutral: #77776f;
         }
       }
       * {
@@ -41,6 +57,74 @@
         border-radius: 8px;
         padding: 12px 14px;
       }
+      [hidden] {
+        display: none !important;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      ul,
+      ol {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 4px 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:disabled {
+        color: var(--muted);
+        cursor: default;
+      }
+      .top {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+      #chips {
+        display: contents;
+      }
+      .chip {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+        font-size: 13px;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: var(--neutral);
+      }
+      .chip.good .dot {
+        background: var(--good);
+      }
+      .chip.caution .dot {
+        background: var(--caution);
+      }
+      .chip.bad .dot {
+        background: var(--bad);
+      }
+      .spacer {
+        flex: 1;
+      }
+      #details {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
       dl {
         display: grid;
         grid-template-columns: max-content 1fr;
@@ -54,12 +138,95 @@
         margin: 0;
         overflow-wrap: anywhere;
       }
+      .buttons {
+        display: flex;
+        gap: 8px;
+      }
+      .card {
+        padding: 20px 24px;
+        border-radius: 10px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 280px;
+        gap: 24px;
+      }
+      .card.alone {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .summary {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-width: 0;
+      }
+      .eyebrow {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      h1 {
+        margin: 0;
+        font-size: 28px;
+        line-height: 1.2;
+        overflow-wrap: anywhere;
+      }
+      .bar {
+        height: 10px;
+        border-radius: 5px;
+        background: var(--track);
+        overflow: hidden;
+      }
+      #fill {
+        height: 100%;
+        background: var(--accent);
+      }
+      #facts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 24px;
+      }
+      #status {
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: var(--bg);
+      }
+      #status.now {
+        background: var(--now-bg);
+        color: var(--now-text);
+      }
+      #steps {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 13px;
+        max-height: 240px;
+        overflow: auto;
+      }
+      #steps li {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      #steps .done {
+        color: var(--muted);
+      }
+      #steps .now {
+        color: var(--now-text);
+        font-weight: 600;
+      }
+      .note {
+        flex: none;
+      }
       .log {
         flex: 1;
-        min-height: 0;
+        min-height: 120px;
         display: flex;
         flex-direction: column;
         gap: 6px;
+      }
+      .log header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
       }
       h2 {
         margin: 0;
@@ -67,43 +234,64 @@
         font-weight: 600;
         color: var(--muted);
       }
-      pre {
+      #stop:not(:disabled) {
+        color: var(--bad);
+      }
+      #log {
         flex: 1;
-        margin: 0;
+        min-height: 0;
         overflow: auto;
-        font: 12px/1.6 ui-monospace, Consolas, monospace;
-        white-space: pre-wrap;
-      }
-      .buttons {
         display: flex;
-        gap: 8px;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 13px;
       }
-      button[hidden] {
-        display: none;
+      #log li {
+        display: flex;
+        gap: 12px;
       }
-      button {
-        align-self: flex-start;
-        font: inherit;
-        padding: 6px 12px;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        background: var(--panel);
-        color: var(--text);
-        cursor: pointer;
+      #log time {
+        flex: none;
+        color: var(--muted);
+        font: 12px/1.6 ui-monospace, Consolas, monospace;
+      }
+      @media (max-width: 640px) {
+        .card {
+          grid-template-columns: minmax(0, 1fr);
+        }
       }
     </style>
   </head>
   <body>
-    <section>
-      <dl id="rows"></dl>
-    </section>
-    <div class="buttons">
-      <button id="recheck" type="button">상태 다시 확인</button>
-      <button id="account" type="button" hidden></button>
+    <div class="top">
+      <ul id="chips"></ul>
+      <span class="spacer"></span>
+      <button id="login" type="button" hidden></button>
+      <button id="details-toggle" type="button" aria-expanded="false" aria-controls="details">자세히</button>
     </div>
+    <section id="details" hidden>
+      <dl id="rows"></dl>
+      <div class="buttons">
+        <button id="recheck" type="button">상태 다시 확인</button>
+        <button id="logout" type="button" hidden></button>
+      </div>
+    </section>
+    <section id="card" class="card">
+      <div class="summary">
+        <span class="eyebrow">폰에서 맡긴 일</span>
+        <h1 id="title"></h1>
+        <div id="bar" class="bar" hidden><div id="fill"></div></div>
+        <div id="facts"></div>
+        <div id="status"></div>
+      </div>
+      <ol id="steps" hidden></ol>
+    </section>
     <section class="log">
-      <h2>로그</h2>
-      <pre id="log"></pre>
+      <header>
+        <h2>기록</h2>
+        <button id="stop" type="button" disabled>중단</button>
+      </header>
+      <ol id="log"></ol>
     </section>
     <script src="dist/window.js"></script>
   </body>

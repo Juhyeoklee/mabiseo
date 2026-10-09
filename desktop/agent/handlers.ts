@@ -48,7 +48,7 @@ const planDescription =
 export type HandlerSession = Pick<Session, "tools" | "approve" | "onEvent">;
 
 export function handlers({ tools, approve, onEvent }: HandlerSession): Handler[] {
-  const plan = new Plan((done, remainingSeconds) => onEvent({ kind: "plan_step", done, remainingSeconds }));
+  const plan = new Plan(onEvent);
   return [
     ...catalog.map((spec) =>
       handler(spec.name, spec.description, shape(spec), async (input: ToolInput) => {
